@@ -232,12 +232,27 @@ input,select,textarea{font-family:inherit;}
   width:100%;padding:11px 12px;border-radius:11px;border:1px solid var(--border);font-size:14.5px;background:var(--surface);color:var(--ink);
 }
 .field input:focus,.field select:focus,.field textarea:focus{outline:2px solid var(--teal);outline-offset:-1px;}
+.field textarea{resize:vertical;min-height:118px;line-height:1.45;}
 .type-toggle{display:flex;gap:8px;margin-bottom:14px;}
 .type-toggle button{
   flex:1;padding:11px;border-radius:11px;border:1.5px solid var(--border);background:var(--surface);font-weight:600;font-size:13.5px;color:var(--ink-soft);
 }
 .type-toggle button.active.income{border-color:var(--teal);background:var(--teal-tint);color:var(--teal-dark);}
 .type-toggle button.active.expense{border-color:var(--ink);background:var(--surface-alt);color:var(--ink);}
+.form-actions{display:flex;gap:8px;align-items:center;}
+.form-actions .btn{flex:1;justify-content:center;}
+.parse-preview{
+  border:1px solid var(--border);border-radius:14px;background:var(--surface-alt);padding:12px;margin-bottom:14px;
+}
+.parse-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+.parse-item{min-width:0;}
+.parse-label{font-size:11.5px;color:var(--ink-faint);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;}
+.parse-value{font-size:13.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.parse-message{font-size:12.5px;color:var(--ink-soft);line-height:1.45;margin-top:10px;}
+.message-box{
+  white-space:pre-wrap;word-break:break-word;border:1px solid var(--border);border-radius:14px;
+  background:var(--surface-alt);padding:13px;font-size:13px;line-height:1.5;color:var(--ink-soft);
+}
 .row-flex{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .tiny-btn{border:none;background:none;color:var(--ink-faint);padding:6px;border-radius:8px;display:flex;}
 .tiny-btn:active{background:var(--surface-alt);}
@@ -305,6 +320,7 @@ const ICONS = {
   target:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
   check:'<polyline points="20 6 9 17 4 12"/>',
   info:'<circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none"/>',
+  share:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/>',
 };
 function icon(name,size=18,stroke=2){
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
@@ -360,6 +376,7 @@ let state = null;
 let ui = { tab:'dashboard', period:'monthly', txFilter:{type:'all',categoryId:'all'} };
 let saveTimer=null;
 let currentTheme='light';
+let pendingMpesaImport=null;
 
 function loadTheme(){
   try{
@@ -380,6 +397,12 @@ function toggleTheme(){
     localStorage.setItem('ledger-theme-v1', currentTheme);
   }catch(e){}
   renderSettingsBody();
+}
+
+function escapeHTML(value){
+  return String(value ?? '').replace(/[&<>"']/g, ch=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
 }
 
 async function loadState(){
@@ -501,7 +524,10 @@ function render(){
       <div class="desktop-main">
         <div class="desktop-topbar">
           <h1 style="font-size:22px;margin:0;">${navItems.find(n=>n.id===ui.tab)?.label||''}</h1>
-          <button class="btn btn-primary" onclick="openTxModal()">${icon('plus',16)} Add transaction</button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-secondary" onclick="openMpesaImportModal()">${icon('wallet',16)} Import M-Pesa</button>
+            <button class="btn btn-primary" onclick="openTxModal()">${icon('plus',16)} Add transaction</button>
+          </div>
         </div>
         ${pageHTML}
       </div>
@@ -641,6 +667,10 @@ function renderTransactions(){
   if(f.categoryId!=='all') txs = txs.filter(t=>t.categoryId===f.categoryId);
 
   return `
+    <div class="form-actions" style="margin-bottom:10px;">
+      <button class="btn btn-secondary" onclick="openMpesaImportModal()">${icon('wallet',16)} Import M-Pesa</button>
+      <button class="btn btn-primary" onclick="openTxModal()">${icon('plus',16)} Add</button>
+    </div>
     <div class="tabbar-scroll">
       ${['all','income','expense'].map(t=>`<button class="chip ${f.type===t?'selected':''}" onclick="setTxTypeFilter('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}
       <select onchange="setTxCatFilter(this.value)" style="border:none;background:var(--surface-alt);border-radius:10px;padding:8px 10px;font-size:13px;font-weight:600;">
@@ -658,6 +688,7 @@ function editableTxRow(t){
     <div style="display:flex;align-items:center;">
       <div style="flex:1">${txRowHTML(t)}</div>
       <div style="display:flex;gap:2px;">
+        ${t.mpesa?.message?`<button class="tiny-btn" title="View M-Pesa message" onclick="openMpesaMessageModal('${t.id}')">${icon('wallet',15)}</button>`:''}
         <button class="tiny-btn" onclick="openTxModal('${t.id}')">${icon('edit',15)}</button>
         <button class="tiny-btn" onclick="deleteTx('${t.id}')">${icon('trash',15)}</button>
       </div>
@@ -728,6 +759,7 @@ function renderTxModalBody(type, editing){
         <input type="text" name="note" placeholder="e.g. Groceries at Naivas" value="${editing?editing.note||'':''}">
       </div>
       <button type="submit" class="btn btn-primary btn-block">${editing?'Save changes':'Add transaction'}</button>
+      ${editing?'':`<button type="button" class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="openMpesaImportModal()">${icon('wallet',16)} Import M-Pesa message</button>`}
     </form>
   `;
 }
@@ -764,6 +796,272 @@ function applyAutomation(s, incomeAmount, source, date){
     if(allocAmount<=0) return;
     s.transactions.push({id:uid(),type:'expense',amount:allocAmount,categoryId:r.categoryId,date,note:`Auto: ${r.name}`,source:null});
   });
+}
+
+/* ============ M-PESA IMPORT ============ */
+function openMpesaImportModal(){
+  pendingMpesaImport=null;
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head">
+      <div class="sheet-title">Import M-Pesa message</div>
+      <button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button>
+    </div>
+    <form onsubmit="return parseMpesaImport(event)">
+      <div class="banner info" style="margin-bottom:14px;">
+        ${icon('info',17)}
+        <div class="banner-text">Paste an M-Pesa SMS or upload a text file. Ledger will detect income or expense, amount, date, and recipient, then ask you to choose a category.</div>
+      </div>
+      <div class="field">
+        <label>M-Pesa message</label>
+        <textarea name="message" required placeholder="e.g. TF72... Confirmed. Ksh1,250.00 paid to NAIVAS on 6/7/26 at 3:45 PM."></textarea>
+      </div>
+      <div class="field">
+        <label>Upload message file (optional)</label>
+        <input type="file" accept=".txt,text/plain" onchange="loadMpesaFile(event)">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">${icon('check',16)} Read message</button>
+    </form>
+  `;
+  showSheet();
+}
+
+function loadMpesaFile(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const textarea = document.querySelector('#sheet textarea[name="message"]');
+    if(textarea) textarea.value = reader.result || '';
+  };
+  reader.readAsText(file);
+}
+
+function parseMpesaImport(e){
+  e.preventDefault();
+  const raw = e.target.message.value.trim();
+  const parsed = parseMpesaMessage(raw);
+  if(!parsed.valid){
+    showMpesaParseError(parsed.error || 'I could not read that message. Please check that it includes an amount and date.');
+    return false;
+  }
+  pendingMpesaImport = parsed;
+  renderMpesaCategoryStep(parsed);
+  return false;
+}
+
+function showMpesaParseError(message){
+  const existing = document.getElementById('mpesa-parse-error');
+  if(existing) existing.remove();
+  const form = document.querySelector('#sheet form');
+  if(!form) return;
+  form.insertAdjacentHTML('afterbegin', `<div id="mpesa-parse-error" class="banner danger">${icon('alert',17)}<div class="banner-text">${escapeHTML(message)}</div></div>`);
+}
+
+function parseMpesaMessage(message){
+  const clean = message.replace(/\s+/g,' ').trim();
+  const lower = clean.toLowerCase();
+  const amountMatch = clean.match(/(?:ksh|kes)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+  const dateMatch = clean.match(/\bon\s+(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})(?:\s+at\s+([0-9:.]+\s*(?:am|pm)?))?/i);
+  const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g,'')) : 0;
+  const date = dateMatch ? mpesaDateToISO(dateMatch) : '';
+  const type = detectMpesaType(lower);
+  const party = detectMpesaParty(clean, type);
+  if(!amount) return {valid:false,error:'No M-Pesa amount was found in that message.'};
+  if(!date) return {valid:false,error:'No transaction date was found. Please paste the full M-Pesa message with the "on day/month/year" date.'};
+  if(!type) return {valid:false,error:'I found the amount, but could not tell if it is income or expense.'};
+  return {
+    valid:true,
+    type,
+    amount,
+    date,
+    party,
+    raw:clean,
+    note: mpesaNote(type, party, clean)
+  };
+}
+
+function detectMpesaType(lower){
+  if(/\bpaid to\b|\bsent to\b|\bwithdrawn?\b|\bbought\b|\bairtime\b|\bpay bill\b|\bbuy goods\b/.test(lower)) return 'expense';
+  if(/\breceived\b|\byou have received\b/.test(lower)) return 'income';
+  return null;
+}
+
+function detectMpesaParty(message, type){
+  if(type==='expense' && /\bairtime\b/i.test(message)) return 'Safaricom Airtime';
+  const patterns = type==='income'
+    ? [/\bfrom\s+(.+?)(?:\s+\d{7,}|\s+on\s+|\.\s*New|\.\s*Your|\.\s*M-PESA|$)/i]
+    : [
+        /\bpaid to\s+(.+?)(?:\s+on\s+|\.\s*New|\.\s*Your|\.\s*M-PESA|$)/i,
+        /\bsent to\s+(.+?)(?:\s+\d{7,}|\s+on\s+|\.\s*New|\.\s*Your|\.\s*M-PESA|$)/i,
+        /\bwithdrawn from\s+(.+?)(?:\s+on\s+|\.\s*New|\.\s*Your|\.\s*M-PESA|$)/i,
+      ];
+  for(const pattern of patterns){
+    const match = message.match(pattern);
+    if(match && match[1]) return cleanMpesaParty(match[1]);
+  }
+  return type==='income' ? 'M-Pesa sender' : 'M-Pesa recipient';
+}
+
+function cleanMpesaParty(value){
+  return value
+    .replace(/\baccount\s+no\.?.*$/i,'')
+    .replace(/\btill\s+no\.?.*$/i,'')
+    .replace(/\bbusiness\s+no\.?.*$/i,'')
+    .replace(/\bfor\s*$/i,'')
+    .replace(/\s+/g,' ')
+    .replace(/[.,;:]+$/,'')
+    .trim();
+}
+
+function mpesaDateToISO(match){
+  const day = parseInt(match[1],10);
+  const month = parseInt(match[2],10);
+  let year = parseInt(match[3],10);
+  if(year<100) year += 2000;
+  if(!day || !month || month>12) return todayISO();
+  return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+
+function mpesaNote(type, party, raw){
+  const prefix = type==='income' ? 'M-Pesa from' : 'M-Pesa to';
+  return `${prefix} ${party || 'unknown'}`.slice(0,80);
+}
+
+function renderMpesaCategoryStep(parsed){
+  const cats = state.categories.filter(c=>c.type===parsed.type);
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head">
+      <div class="sheet-title">Choose category</div>
+      <button class="icon-btn" onclick="openMpesaImportModal()">${icon('chevron',17)}</button>
+    </div>
+    <div class="parse-preview">
+      <div class="parse-grid">
+        <div class="parse-item"><div class="parse-label">Type</div><div class="parse-value">${parsed.type==='income'?'Income':'Expense'}</div></div>
+        <div class="parse-item"><div class="parse-label">Amount</div><div class="parse-value mono">${fmt(parsed.amount)}</div></div>
+        <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${parsed.date}</div></div>
+        <div class="parse-item"><div class="parse-label">${parsed.type==='income'?'From':'Recipient'}</div><div class="parse-value">${escapeHTML(parsed.party)}</div></div>
+      </div>
+      <div class="parse-message">${escapeHTML(parsed.raw)}</div>
+    </div>
+    <form onsubmit="return submitMpesaImport(event)">
+      <div class="field">
+        <label>Category for this ${parsed.type}</label>
+        <select name="categoryId" required>
+          ${cats.map(c=>`<option value="${c.id}">${c.icon} ${escapeHTML(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" name="date" required value="${parsed.date}">
+      </div>
+      <div class="field">
+        <label>Note</label>
+        <input type="text" name="note" value="${escapeHTML(parsed.note)}">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Save M-Pesa transaction</button>
+    </form>
+  `;
+}
+
+function submitMpesaImport(e){
+  e.preventDefault();
+  if(!pendingMpesaImport) return false;
+  const f = e.target;
+  const parsed = pendingMpesaImport;
+  mutate(s=>{
+    s.transactions.push({
+      id:uid(),
+      type:parsed.type,
+      amount:parsed.amount,
+      categoryId:f.categoryId.value,
+      date:f.date.value,
+      note:f.note.value.trim() || parsed.note,
+      source:null,
+      mpesa:{party:parsed.party, message:parsed.raw}
+    });
+    if(parsed.type==='income') applyAutomation(s, parsed.amount, null, f.date.value);
+  });
+  pendingMpesaImport=null;
+  closeSheet();
+  return false;
+}
+
+function openMpesaMessageModal(txId){
+  const tx = state.transactions.find(t=>t.id===txId);
+  if(!tx?.mpesa?.message) return;
+  const cat = catById(tx.categoryId);
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head">
+      <div class="sheet-title">M-Pesa message</div>
+      <button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button>
+    </div>
+    <div class="parse-preview">
+      <div class="parse-grid">
+        <div class="parse-item"><div class="parse-label">Type</div><div class="parse-value">${tx.type==='income'?'Income':'Expense'}</div></div>
+        <div class="parse-item"><div class="parse-label">Amount</div><div class="parse-value mono">${fmt(tx.amount)}</div></div>
+        <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${tx.date}</div></div>
+        <div class="parse-item"><div class="parse-label">${tx.type==='income'?'From':'Recipient'}</div><div class="parse-value">${escapeHTML(tx.mpesa.party || 'M-Pesa')}</div></div>
+      </div>
+      <div class="parse-message">${cat?`${cat.icon} ${escapeHTML(cat.name)}`:'Uncategorized'}</div>
+    </div>
+    <div class="field">
+      <label>Original message</label>
+      <div class="message-box">${escapeHTML(tx.mpesa.message)}</div>
+    </div>
+    <div id="mpesa-share-status"></div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="shareMpesaMessage('${tx.id}')">${icon('share',16)} Share message</button>
+      <button class="btn btn-secondary" onclick="openTxModal('${tx.id}')">${icon('edit',16)} Edit</button>
+    </div>
+  `;
+  showSheet();
+}
+
+async function shareMpesaMessage(txId){
+  const tx = state.transactions.find(t=>t.id===txId);
+  if(!tx?.mpesa?.message) return;
+  const title = `M-Pesa ${tx.type==='income'?'income':'expense'} - ${fmt(tx.amount)}`;
+  const text = tx.mpesa.message;
+  try{
+    if(navigator.share){
+      await navigator.share({title, text});
+      showMpesaShareStatus('Shared successfully.', 'info');
+      return;
+    }
+    await copyText(text);
+    showMpesaShareStatus('Sharing is not available here, so the message was copied.', 'info');
+  }catch(e){
+    if(e && e.name === 'AbortError') return;
+    try{
+      await copyText(text);
+      showMpesaShareStatus('Could not open sharing, so the message was copied.', 'info');
+    }catch(copyError){
+      showMpesaShareStatus('Could not share automatically. You can copy the message from above.', 'danger');
+    }
+  }
+}
+
+async function copyText(text){
+  if(navigator.clipboard?.writeText){
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly','');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand('copy');
+  textarea.remove();
+  if(!ok) throw new Error('Copy failed');
+}
+
+function showMpesaShareStatus(message, kind){
+  const el = document.getElementById('mpesa-share-status');
+  if(!el) return;
+  el.innerHTML = `<div class="banner ${kind}" style="margin-bottom:10px;">${icon(kind==='danger'?'alert':'info',17)}<div class="banner-text">${escapeHTML(message)}</div></div>`;
 }
 
 /* ============ BUDGETS ============ */
