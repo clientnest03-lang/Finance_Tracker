@@ -79,6 +79,10 @@
   @page{margin:14mm;}
 }
 *{box-sizing:border-box;}
+.chat-bubble{max-width:85%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;}
+.chat-bubble.user{align-self:flex-end;background:var(--primary-btn-bg);color:var(--primary-btn-fg);border-bottom-right-radius:4px;}
+.chat-bubble.ai{align-self:flex-start;background:var(--surface-alt);color:var(--ink);border-bottom-left-radius:4px;}
+.ai-typing{opacity:.65;font-style:italic;}
 html,body{margin:0;padding:0;}
 body{
   background:var(--bg);
@@ -346,6 +350,7 @@ const ICONS = {
   share:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/>',
   file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/><path d="M8 9h2"/>',
   download:'<path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 19h14"/>',
+  sparkle:'<path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9 Z"/>',
 };
 function icon(name,size=18,stroke=2){
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
@@ -517,6 +522,7 @@ function render(){
     {id:'budgets',label:'Budgets',icon:'wallet'},
     {id:'business',label:'Business',icon:'briefcase'},
     {id:'automation',label:'Rules',icon:'zap'},
+    {id:'advisor',label:'Advisor',icon:'sparkle'},
     {id:'insights',label:'Insights',icon:'bulb'},
   ];
   const pageHTML = renderPage(ui.tab);
@@ -559,6 +565,10 @@ function render(){
       </div>
     </div>
   `;
+  if(ui.tab==='advisor'){
+    const log = document.getElementById('aiChatLog');
+    if(log) log.scrollTop = log.scrollHeight;
+  }
 }
 function setTab(t){ ui.tab=t; render(); }
 
@@ -569,6 +579,7 @@ function renderPage(tab){
   if(tab==='budgets') return renderBudgets();
   if(tab==='business') return renderBusiness();
   if(tab==='automation') return renderAutomation();
+  if(tab==='advisor') return renderAdvisor();
   if(tab==='insights') return renderInsights();
   return '';
 }
@@ -1520,6 +1531,184 @@ function submitCategory(e){
   return false;
 }
 
+/* ============ AI ADVISOR ============ */
+const AI_KEY_STORAGE = 'ledger-ai-key-v1';
+const AI_CHAT_STORAGE = 'ledger-ai-chat-v1';
+const AI_MODEL = 'claude-sonnet-5'; // swap this if you want a different model
+let aiChat = [];
+let aiThinking = false;
+
+function loadAIChat(){
+  try{
+    const saved = localStorage.getItem(AI_CHAT_STORAGE);
+    aiChat = saved ? JSON.parse(saved) : [];
+  }catch(e){ aiChat = []; }
+}
+function persistAIChat(){
+  try{ localStorage.setItem(AI_CHAT_STORAGE, JSON.stringify(aiChat.slice(-40))); }catch(e){}
+}
+function hasAIKey(){ return !!localStorage.getItem(AI_KEY_STORAGE); }
+
+function buildFinancialSnapshot(){
+  const allT = totals(state.transactions);
+  const period = 'monthly';
+  const key = currentPeriodKey(period);
+  const monthTx = state.transactions.filter(t=>txInPeriod(t,period,key));
+  const monthT = totals(monthTx);
+  const budgetLines = state.budgets.length ? state.budgets.map(b=>{
+    const cat = catById(b.categoryId);
+    const spent = monthTx.filter(t=>t.type==='expense'&&t.categoryId===b.categoryId).reduce((s,t)=>s+t.amount,0);
+    const pct = b.amount>0 ? Math.round(spent/b.amount*100) : 0;
+    return `${cat?cat.name:'Unknown'} (${b.period}): spent ${fmt(spent)} of ${fmt(b.amount)} budget (${pct}%)`;
+  }).join('; ') : 'No budgets set';
+  const targetLines = state.targets.length ? state.targets.map(tg=>`${tg.period} target ${fmt(tg.amount)} (currently at ${fmt(monthT.net)} net this month)`).join('; ') : 'No savings targets set';
+  const bizLines = state.businesses.length ? state.businesses.map(b=>{
+    const tx = state.transactions.filter(t=>t.source?.kind==='business'&&t.source.id===b.id&&txInPeriod(t,period,key));
+    const t = totals(tx);
+    return `${b.name}: income ${fmt(t.income)}, expense ${fmt(t.expense)}, net ${fmt(t.net)} this month`;
+  }).join('; ') : 'No businesses tracked';
+  const recentTx = [...state.transactions].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,20)
+    .map(t=>`${t.date} ${t.type} ${fmt(t.amount)} — ${catById(t.categoryId)?.name||'Uncategorized'}${sourceLabel(t.source)?' via '+sourceLabel(t.source):''}${t.note?' ('+t.note+')':''}`)
+    .join('\n');
+  return [
+    `All-time net balance: ${fmt(allT.net)} (total income ${fmt(allT.income)}, total expense ${fmt(allT.expense)}).`,
+    `This month so far: income ${fmt(monthT.income)}, expenses ${fmt(monthT.expense)}, net ${fmt(monthT.net)}.`,
+    `Budgets: ${budgetLines}.`,
+    `Targets: ${targetLines}.`,
+    `Businesses: ${bizLines}.`,
+    `Recent transactions, most recent first:\n${recentTx || 'none yet'}`
+  ].join('\n\n');
+}
+
+async function callClaudeAdvisor(userMessage){
+  const apiKey = localStorage.getItem(AI_KEY_STORAGE);
+  if(!apiKey) throw new Error('No API key saved yet. Tap "Add key" above.');
+  const snapshot = buildFinancialSnapshot();
+  const history = aiChat.slice(-10).map(m=>({role:m.role, content:m.content}));
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: 700,
+      system: `You are the financial advisor built into the user's personal "Ledger" app. All amounts are in Kenyan Shillings (KES). Base every answer strictly on the financial snapshot below — never invent numbers that aren't in it. Be direct and specific (cite real figures and category names), flag overspending against stated budgets/targets when it applies, and keep answers concise (roughly under 150 words) unless the user asks for more detail.\n\nFINANCIAL SNAPSHOT:\n${snapshot}`,
+      messages: [...history, {role:'user', content:userMessage}]
+    })
+  });
+  if(!res.ok){
+    let detail = '';
+    try{ detail = (await res.json()).error?.message || ''; }catch(e){}
+    if(res.status===401) throw new Error('That API key was rejected. Double-check it in "Add key".');
+    throw new Error(detail || `Request failed (${res.status}).`);
+  }
+  const data = await res.json();
+  const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
+  return text || "I didn't get a usable response — try again.";
+}
+
+function chatBubbleHTML(m){
+  return `<div class="chat-bubble ${m.role==='user'?'user':'ai'}">${escapeHTML(m.content).replace(/\n/g,'<br>')}</div>`;
+}
+
+function renderAdvisor(){
+  const ok = hasAIKey();
+  return `
+    <div class="card" style="margin-bottom:12px;">
+      <div class="row-flex">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="row-icon" style="background:var(--teal-tint);color:var(--teal-dark);">${icon('sparkle',18)}</div>
+          <div>
+            <div class="row-title">AI Financial Advisor</div>
+            <div class="row-sub">${ok?'Connected — answers use your real transactions':'Add your Anthropic API key to start'}</div>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="openAIKeySetup()">${ok?'Change key':'Add key'}</button>
+      </div>
+    </div>
+    <div class="tabbar-scroll">
+      <button class="chip" onclick="quickAskAI('Am I overspending this month? Be specific about which categories and by how much.')">Am I overspending?</button>
+      <button class="chip" onclick="quickAskAI('Give me 3 practical, specific tips to improve my finances based on my recent transactions.')">Give me advice</button>
+      <button class="chip" onclick="quickAskAI('How are my businesses performing compared to each other right now?')">Business check-in</button>
+      <button class="chip" onclick="quickAskAI('Am I on track to hit my savings targets this month?')">Am I on track?</button>
+    </div>
+    <div class="card" id="aiChatLog" style="margin-top:10px;min-height:220px;max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;">
+      ${aiChat.length? aiChat.map(chatBubbleHTML).join('') : `<div class="empty">${icon('sparkle',30)}<div class="empty-title">Ask about your spending, budgets, or businesses</div></div>`}
+      ${aiThinking? `<div class="chat-bubble ai"><span class="ai-typing">Thinking…</span></div>` : ''}
+    </div>
+    <form onsubmit="return sendAdvisorMessage(event)" class="form-actions" style="margin-top:10px;">
+      <input type="text" id="aiInput" placeholder="${ok?'Ask about your finances…':'Add your API key first'}" style="flex:1;border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface);color:var(--ink);" ${ok?'':'disabled'} autocomplete="off">
+      <button type="submit" class="btn btn-primary" ${ok?'':'disabled'}>${icon('chevron',16)}</button>
+    </form>
+    <div class="row-sub" style="margin-top:8px;">Your API key is stored only in this browser and is sent straight to Anthropic — it never passes through Client Nest or anywhere else.</div>
+  `;
+}
+
+function openAIKeySetup(){
+  const existing = localStorage.getItem(AI_KEY_STORAGE) || '';
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head"><div class="sheet-title">AI Advisor API key</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
+    <form onsubmit="return saveAIKeyFromForm(event)">
+      <div class="field"><label>Anthropic API key</label><input type="password" name="key" value="${escapeHTML(existing)}" placeholder="sk-ant-..." autocomplete="off"></div>
+      <div class="row-sub" style="margin-bottom:14px;">Create a key at console.anthropic.com. It stays in this browser's local storage and is used to call the Anthropic API directly.</div>
+      <div class="form-actions">
+        ${existing?`<button type="button" class="btn btn-secondary" onclick="clearAIKey()">Remove key</button>`:''}
+        <button type="submit" class="btn btn-primary btn-block">Save key</button>
+      </div>
+    </form>
+  `;
+  showSheet();
+}
+function saveAIKeyFromForm(e){
+  e.preventDefault();
+  const key = e.target.key.value.trim();
+  if(key) localStorage.setItem(AI_KEY_STORAGE, key);
+  closeSheet();
+  render();
+  return false;
+}
+function clearAIKey(){
+  localStorage.removeItem(AI_KEY_STORAGE);
+  closeSheet();
+  render();
+}
+
+function quickAskAI(text){
+  if(!hasAIKey()){ openAIKeySetup(); return; }
+  const input = document.getElementById('aiInput');
+  if(input) input.value = text;
+  sendAdvisorMessage({preventDefault(){}});
+}
+
+function sendAdvisorMessage(e){
+  e.preventDefault();
+  if(!hasAIKey()){ openAIKeySetup(); return false; }
+  const input = document.getElementById('aiInput');
+  const text = (input?.value||'').trim();
+  if(!text) return false;
+  input.value = '';
+  aiChat.push({role:'user', content:text});
+  persistAIChat();
+  aiThinking = true;
+  render();
+  callClaudeAdvisor(text).then(reply=>{
+    aiChat.push({role:'assistant', content:reply});
+    aiThinking = false;
+    persistAIChat();
+    render();
+  }).catch(err=>{
+    aiChat.push({role:'assistant', content:`⚠️ ${err.message||'Could not reach the AI advisor.'}`});
+    aiThinking = false;
+    persistAIChat();
+    render();
+  });
+  return false;
+}
+
 /* ============ EXPORT / DOWNLOAD LEDGER ============ */
 function openExportModal(){
   document.getElementById('sheet').innerHTML = `
@@ -1649,6 +1838,7 @@ document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id
 
 /* ============ INIT ============ */
 loadTheme();
+loadAIChat();
 loadState();
 </script>
 </body>
