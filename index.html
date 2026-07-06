@@ -56,6 +56,28 @@
   --primary-btn-fg:#06201D;
   --shadow:0 1px 2px rgba(0,0,0,.28), 0 10px 28px -14px rgba(0,0,0,.70);
 }
+#print-area{display:none;}
+@media print{
+  body *{visibility:hidden;}
+  #print-area, #print-area *{visibility:visible;}
+  #print-area{display:block;position:absolute;top:0;left:0;width:100%;padding:24px;background:#fff;color:#0F172A;}
+  .p-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0F172A;padding-bottom:12px;margin-bottom:16px;}
+  .p-title{font-family:'Space Grotesk',system-ui,sans-serif;font-size:22px;font-weight:700;margin:0;}
+  .p-sub{font-size:12px;color:#5B6472;margin-top:4px;}
+  .p-meta{text-align:right;font-size:12px;color:#5B6472;}
+  .p-summary{display:flex;gap:18px;margin-bottom:16px;}
+  .p-summary div{border:1px solid #E4E7E5;border-radius:8px;padding:10px 14px;flex:1;}
+  .p-summary .p-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#5B6472;}
+  .p-summary .p-value{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;margin-top:2px;}
+  table.p-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+  table.p-table th{text-align:left;border-bottom:1.5px solid #0F172A;padding:6px 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:#5B6472;}
+  table.p-table td{padding:6px 6px;border-bottom:1px solid #E4E7E5;}
+  table.p-table td.amt{font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap;}
+  table.p-table td.amt.income{color:#0A7A70;}
+  table.p-table td.amt.expense{color:#C0362C;}
+  .p-footer{margin-top:14px;font-size:10.5px;color:#94A0AC;text-align:center;}
+  @page{margin:14mm;}
+}
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
@@ -296,6 +318,7 @@ input,select,textarea{font-family:inherit;}
 <body>
 <div id="app"></div>
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+<div id="print-area"></div>
 
 <script>
 /* ============ ICONS ============ */
@@ -321,6 +344,8 @@ const ICONS = {
   check:'<polyline points="20 6 9 17 4 12"/>',
   info:'<circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none"/>',
   share:'<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/>',
+  file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/><path d="M8 9h2"/>',
+  download:'<path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 19h14"/>',
 };
 function icon(name,size=18,stroke=2){
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
@@ -329,6 +354,7 @@ function icon(name,size=18,stroke=2){
 /* ============ CONSTANTS ============ */
 const CAT_COLORS = ['#0D9488','#C2760C','#3B6FA0','#8E5FBF','#C0362C','#4C8B5A','#B05A9E','#607089'];
 const CAT_ICONS = ['💰','🍽️','🚗','🏠','💡','🎬','🛍️','💊','📚','✈️','🎁','📈','🧾','☕','📱','🐄'];
+const LOGO_SRC = 'assets/financial-tracker-logo.png';
 const CURRENCY = new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',maximumFractionDigits:0});
 function fmt(n){ return CURRENCY.format(Math.round(n||0)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
@@ -1407,6 +1433,19 @@ function renderSettingsBody(){
         <button class="btn btn-secondary btn-sm" onclick="toggleTheme()">${isDark?'Light':'Dark'}</button>
       </div>
     </div>
+    <div class="section-title first">Export</div>
+    <div class="card" style="box-shadow:none;margin-bottom:14px;">
+      <div class="row-flex">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="row-icon" style="background:var(--surface-alt);color:var(--ink-soft);">${icon('download',18)}</div>
+          <div>
+            <div class="row-title">Download ledger</div>
+            <div class="row-sub">Export as CSV or a printable PDF statement</div>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="openExportModal()">Export</button>
+      </div>
+    </div>
     <div class="section-title first">Categories</div>
     <div class="tabbar-scroll">
       <button class="chip selected">Manage</button>
@@ -1479,6 +1518,128 @@ function submitCategory(e){
   });
   openSettings();
   return false;
+}
+
+/* ============ EXPORT / DOWNLOAD LEDGER ============ */
+function openExportModal(){
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head"><div class="sheet-title">Download ledger</div><button class="icon-btn" onclick="openSettings()">${icon('chevron',17)}</button></div>
+    <div class="field"><label>Date range</label>
+      <select id="exportRange">
+        <option value="all">All time</option>
+        <option value="year">This year</option>
+        <option value="month">This month</option>
+      </select>
+    </div>
+    <div class="field"><label>Business / source</label>
+      <select id="exportBiz">
+        <option value="all">Everything</option>
+        ${state.businesses.map(b=>`<option value="${b.id}">${escapeHTML(b.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-actions" style="margin-top:8px;">
+      <button class="btn btn-secondary btn-block" onclick="runExport('csv')">${icon('download',16)} CSV file</button>
+      <button class="btn btn-primary btn-block" onclick="runExport('pdf')">${icon('download',16)} PDF statement</button>
+    </div>
+    <div class="row-sub" style="margin-top:10px;">CSV opens in Excel/Sheets. PDF statement opens your browser's print dialog — choose "Save as PDF".</div>
+  `;
+  showSheet();
+}
+function getExportTx(){
+  const range = document.getElementById('exportRange').value;
+  const bizId = document.getElementById('exportBiz').value;
+  const now = new Date();
+  let txs = [...state.transactions];
+  if(range==='year'){
+    const y = now.getFullYear();
+    txs = txs.filter(t=>new Date(t.date).getFullYear()===y);
+  } else if(range==='month'){
+    const y = now.getFullYear(), m = now.getMonth();
+    txs = txs.filter(t=>{ const d=new Date(t.date); return d.getFullYear()===y && d.getMonth()===m; });
+  }
+  if(bizId!=='all'){
+    txs = txs.filter(t=>t.source && t.source.kind==='business' && t.source.id===bizId);
+  }
+  return txs.sort((a,b)=>a.date.localeCompare(b.date));
+}
+function triggerDownload(filename, content, mime){
+  const blob = new Blob([content], {type:mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+function csvEscape(v){
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function runExport(kind){
+  const txs = getExportTx();
+  if(!txs.length){
+    showMpesaShareStatus && null;
+    alert('No transactions match that range/business.');
+    return;
+  }
+  if(kind==='csv') exportLedgerCSV(txs);
+  else exportLedgerPDF(txs);
+}
+function exportLedgerCSV(txs){
+  const rows = [['Date','Type','Category','Business/Source','Note','Amount (KES)']];
+  let balance = 0;
+  txs.forEach(t=>{
+    balance += t.type==='income' ? t.amount : -t.amount;
+    rows.push([t.date, t.type, catById(t.categoryId)?.name||'', sourceLabel(t.source)||'', t.note||'', t.type==='income'?t.amount:-t.amount]);
+  });
+  const totalIncome = txs.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
+  const totalExpense = txs.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
+  rows.push([]);
+  rows.push(['','','','','Total income', totalIncome]);
+  rows.push(['','','','','Total expense', -totalExpense]);
+  rows.push(['','','','','Net', totalIncome-totalExpense]);
+  const csv = rows.map(r=>r.map(csvEscape).join(',')).join('\n');
+  triggerDownload(`ledger-${todayISO()}.csv`, csv, 'text/csv;charset=utf-8;');
+  closeSheet();
+}
+function exportLedgerPDF(txs){
+  const totalIncome = txs.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
+  const totalExpense = txs.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
+  const net = totalIncome - totalExpense;
+  let balance = 0;
+  const rowsHTML = txs.map(t=>{
+    balance += t.type==='income' ? t.amount : -t.amount;
+    const cat = catById(t.categoryId);
+    const src = sourceLabel(t.source);
+    return `<tr>
+      <td>${escapeHTML(t.date)}</td>
+      <td>${escapeHTML(cat?cat.name:'')}</td>
+      <td>${escapeHTML(t.note||'')}</td>
+      <td>${escapeHTML(src||'')}</td>
+      <td class="amt ${t.type}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</td>
+      <td class="amt">${fmt(balance)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('print-area').innerHTML = `
+    <div class="p-head">
+      <div>
+        <p class="p-title">Client Nest — Ledger Statement</p>
+        <div class="p-sub">${txs.length} transactions · ${escapeHTML(txs[0].date)} to ${escapeHTML(txs[txs.length-1].date)}</div>
+      </div>
+      <div class="p-meta">Generated ${escapeHTML(todayISO())}<br>All amounts in KES</div>
+    </div>
+    <div class="p-summary">
+      <div><div class="p-label">Total income</div><div class="p-value">${fmt(totalIncome)}</div></div>
+      <div><div class="p-label">Total expense</div><div class="p-value">${fmt(totalExpense)}</div></div>
+      <div><div class="p-label">Net</div><div class="p-value">${fmt(net)}</div></div>
+    </div>
+    <table class="p-table">
+      <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Business/Source</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Balance</th></tr></thead>
+      <tbody>${rowsHTML}</tbody>
+    </table>
+    <div class="p-footer">Generated by Ledger</div>
+  `;
+  closeSheet();
+  setTimeout(()=>window.print(), 150);
 }
 
 /* ============ SHEET / MODAL CONTROLS ============ */
