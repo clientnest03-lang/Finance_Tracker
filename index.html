@@ -1532,9 +1532,9 @@ function submitCategory(e){
 }
 
 /* ============ AI ADVISOR ============ */
-const AI_KEY_STORAGE = 'ledger-ai-key-v1';
+const AI_KEY_STORAGE = 'ledger-gemini-key-v1';
 const AI_CHAT_STORAGE = 'ledger-ai-chat-v1';
-const AI_MODEL = 'claude-sonnet-5'; // swap this if you want a different model
+const AI_MODEL = 'gemini-2.5-flash'; // swap to 'gemini-2.5-pro' for a stronger (slower/pricier) model
 let aiChat = [];
 let aiThinking = false;
 
@@ -1580,34 +1580,37 @@ function buildFinancialSnapshot(){
   ].join('\n\n');
 }
 
-async function callClaudeAdvisor(userMessage){
+async function callGeminiAdvisor(userMessage){
   const apiKey = localStorage.getItem(AI_KEY_STORAGE);
   if(!apiKey) throw new Error('No API key saved yet. Tap "Add key" above.');
   const snapshot = buildFinancialSnapshot();
-  const history = aiChat.slice(-10).map(m=>({role:m.role, content:m.content}));
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  // Gemini uses 'user' and 'model' roles (not 'assistant'), and wraps text in a parts array.
+  const history = aiChat.slice(-10).map(m=>({
+    role: m.role==='assistant' ? 'model' : 'user',
+    parts: [{text: m.content}]
+  }));
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const res = await fetch(url, {
     method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true'
-    },
+    headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({
-      model: AI_MODEL,
-      max_tokens: 700,
-      system: `You are the financial advisor built into the user's personal "Ledger" app. All amounts are in Kenyan Shillings (KES). Base every answer strictly on the financial snapshot below — never invent numbers that aren't in it. Be direct and specific (cite real figures and category names), flag overspending against stated budgets/targets when it applies, and keep answers concise (roughly under 150 words) unless the user asks for more detail.\n\nFINANCIAL SNAPSHOT:\n${snapshot}`,
-      messages: [...history, {role:'user', content:userMessage}]
+      systemInstruction: {
+        parts: [{text: `You are the financial advisor built into the user's personal "Ledger" app. All amounts are in Kenyan Shillings (KES). Base every answer strictly on the financial snapshot below — never invent numbers that aren't in it. Be direct and specific (cite real figures and category names), flag overspending against stated budgets/targets when it applies, and keep answers concise (roughly under 150 words) unless the user asks for more detail.\n\nFINANCIAL SNAPSHOT:\n${snapshot}`}]
+      },
+      contents: [...history, {role:'user', parts:[{text:userMessage}]}],
+      generationConfig: { maxOutputTokens: 700 }
     })
   });
   if(!res.ok){
     let detail = '';
     try{ detail = (await res.json()).error?.message || ''; }catch(e){}
-    if(res.status===401) throw new Error('That API key was rejected. Double-check it in "Add key".');
+    if(res.status===400 && /api key/i.test(detail)) throw new Error('That API key was rejected. Double-check it in "Add key".');
+    if(res.status===403) throw new Error('That API key was rejected or lacks access. Double-check it in "Add key".');
     throw new Error(detail || `Request failed (${res.status}).`);
   }
   const data = await res.json();
-  const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const text = parts.map(p=>p.text||'').join('\n').trim();
   return text || "I didn't get a usable response — try again.";
 }
 
@@ -1624,7 +1627,7 @@ function renderAdvisor(){
           <div class="row-icon" style="background:var(--teal-tint);color:var(--teal-dark);">${icon('sparkle',18)}</div>
           <div>
             <div class="row-title">AI Financial Advisor</div>
-            <div class="row-sub">${ok?'Connected — answers use your real transactions':'Add your Anthropic API key to start'}</div>
+            <div class="row-sub">${ok?'Connected — answers use your real transactions':'Add your Gemini API key to start'}</div>
           </div>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="openAIKeySetup()">${ok?'Change key':'Add key'}</button>
@@ -1644,17 +1647,17 @@ function renderAdvisor(){
       <input type="text" id="aiInput" placeholder="${ok?'Ask about your finances…':'Add your API key first'}" style="flex:1;border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface);color:var(--ink);" ${ok?'':'disabled'} autocomplete="off">
       <button type="submit" class="btn btn-primary" ${ok?'':'disabled'}>${icon('chevron',16)}</button>
     </form>
-    <div class="row-sub" style="margin-top:8px;">Your API key is stored only in this browser and is sent straight to Anthropic — it never passes through Client Nest or anywhere else.</div>
+    <div class="row-sub" style="margin-top:8px;">Your API key is stored only in this browser and is sent straight to Google's Gemini API — it never passes through Client Nest or anywhere else.</div>
   `;
 }
 
 function openAIKeySetup(){
   const existing = localStorage.getItem(AI_KEY_STORAGE) || '';
   document.getElementById('sheet').innerHTML = `
-    <div class="sheet-head"><div class="sheet-title">AI Advisor API key</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
+    <div class="sheet-head"><div class="sheet-title">Gemini API key</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
     <form onsubmit="return saveAIKeyFromForm(event)">
-      <div class="field"><label>Anthropic API key</label><input type="password" name="key" value="${escapeHTML(existing)}" placeholder="sk-ant-..." autocomplete="off"></div>
-      <div class="row-sub" style="margin-bottom:14px;">Create a key at console.anthropic.com. It stays in this browser's local storage and is used to call the Anthropic API directly.</div>
+      <div class="field"><label>Google Gemini API key</label><input type="password" name="key" value="${escapeHTML(existing)}" placeholder="AIzaSy..." autocomplete="off"></div>
+      <div class="row-sub" style="margin-bottom:14px;">Create a free key at aistudio.google.com/apikey. It stays in this browser's local storage and is used to call the Gemini API directly.</div>
       <div class="form-actions">
         ${existing?`<button type="button" class="btn btn-secondary" onclick="clearAIKey()">Remove key</button>`:''}
         <button type="submit" class="btn btn-primary btn-block">Save key</button>
@@ -1695,7 +1698,7 @@ function sendAdvisorMessage(e){
   persistAIChat();
   aiThinking = true;
   render();
-  callClaudeAdvisor(text).then(reply=>{
+  callGeminiAdvisor(text).then(reply=>{
     aiChat.push({role:'assistant', content:reply});
     aiThinking = false;
     persistAIChat();
