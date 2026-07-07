@@ -320,7 +320,7 @@ input,select,textarea{font-family:inherit;}
 .tabbar-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;margin-bottom:4px;}
 .tabbar-scroll::-webkit-scrollbar{display:none;}
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
@@ -1948,8 +1948,17 @@ const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechReco
 let recognizer = null;
 let isListening = false;
 
+// Median (and in-app WebViews generally) don't implement the browser's
+// built-in SpeechRecognition service, so `webkitSpeechRecognition` is either
+// missing or fails the instant you call start() there — that's a platform
+// limitation, not a bug in this page. Median instead ships a native
+// "Background Audio" plugin (median.backgroundAudio) that records on-device
+// and can transcribe speech itself. That plugin has to be turned on once in
+// the Median App Studio (Native Plugins → Background Audio) and the app
+// rebuilt before this bridge exists — bridgeMicSupported() reflects that.
+function bridgeMicSupported(){ return isMedianApp && !!medianBridge()?.backgroundAudio; }
 function ttsSupported(){ return 'speechSynthesis' in window; }
-function micSupported(){ return !!SpeechRecognitionAPI; }
+function micSupported(){ return bridgeMicSupported() || (!isMedianApp && !!SpeechRecognitionAPI); }
 
 function setVoiceEnabled(v){
   voiceEnabled = v;
@@ -1962,15 +1971,29 @@ function toggleVoice(){ setVoiceEnabled(!voiceEnabled); }
 function speakText(text){
   if(!ttsSupported() || !text) return;
   window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.rate = 1;
-  u.pitch = 1;
-  window.speechSynthesis.speak(u);
+  // Some WebViews (notably Android) stay briefly "busy" right after cancel();
+  // queuing speak() on the next tick avoids the utterance silently dropping.
+  setTimeout(()=>{
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1;
+    u.pitch = 1;
+    window.speechSynthesis.speak(u);
+  }, 50);
 }
 
-function toggleMic(){
+async function toggleMic(){
+  // Inside the Median app, use its native Background Audio plugin if it's
+  // been enabled for this app.
+  if(bridgeMicSupported()) return toggleMedianMic();
+  // Inside the Median app but the plugin isn't enabled — explain why voice
+  // input doesn't work here instead of failing silently.
+  if(isMedianApp){
+    alert('Voice input needs the "Background Audio" native plugin turned on for this app. In the Median App Studio, go to Native Plugins → Background Audio, enable it, and rebuild the app. Until then you can type your question.');
+    return;
+  }
+  // Regular mobile/desktop browser — use the Web Speech API.
   if(!micSupported()){
-    alert('Voice input isn\'t supported in this browser. It works best in Chrome on Android.');
+    alert('Voice input isn\'t supported in this browser. It works best in Chrome on Android or Safari on iOS.');
     return;
   }
   if(isListening){ recognizer && recognizer.stop(); return; }
@@ -1991,6 +2014,60 @@ function toggleMic(){
     }
   };
   try{ recognizer.start(); }catch(e){ isListening=false; }
+}
+
+// Median native voice input: tap to start recording, tap again to stop.
+// Unlike the Web Speech API there are no interim "as you speak" results —
+// the transcript only arrives once stopRecording() resolves.
+async function toggleMedianMic(){
+  const bridge = medianBridge();
+  if(isListening){
+    try{
+      const result = await bridge.backgroundAudio.stopRecording();
+      isListening = false;
+      render();
+      const transcript = (result?.transcript||'').trim();
+      if(transcript){
+        const input = document.getElementById('aiInput');
+        if(input) input.value = transcript;
+        sendAdvisorMessage({preventDefault(){}});
+      } else {
+        alert("Didn't catch a transcript that time — speech-to-text may not be available for your device's language. You can type your question instead.");
+      }
+    }catch(e){
+      isListening = false;
+      render();
+      alert('Voice input stopped unexpectedly. Please try again or type your question.');
+    }
+    return;
+  }
+  try{
+    const permission = await bridge.backgroundAudio.checkPermission();
+    if(!permission?.granted){
+      const req = await bridge.backgroundAudio.requestPermission();
+      if(!req?.granted){
+        alert("Ledger needs microphone access to hear your question. Please enable it for this app in your device's Settings.");
+        return;
+      }
+    }
+    const result = await bridge.backgroundAudio.startRecording({ format:'m4a', enableTranscription:true, sttLanguage:'en-US' });
+    if(!result?.success){
+      alert("Couldn't start voice input on this device. Please type your question instead.");
+      return;
+    }
+    isListening = true;
+    render();
+  }catch(e){
+    isListening = false;
+    render();
+    if(e?.code==='STT_UNAVAILABLE'){
+      alert("Speech-to-text isn't available for your device's language. You can type your question instead.");
+    } else if(e?.code==='PERMISSION_DENIED'){
+      alert("Ledger needs microphone access to hear your question. Please enable it for this app in your device's Settings.");
+    } else {
+      alert("Couldn't start voice input. Please type your question instead.");
+    }
+  }
 }
 
 function chatBubbleHTML(m, i){
@@ -2153,9 +2230,20 @@ function blobToDataURL(blob){
   });
 }
 // Delivers a generated file to the user. Returns {ok, method} — method is
-// 'median', 'browser', or 'failed' so callers can tailor their messaging
-// (e.g. offer a clipboard-copy fallback when a binary file can't be delivered).
+// 'median' | 'share' | 'browser' | 'open' | 'failed' so callers can tailor
+// their messaging (e.g. offer a clipboard-copy fallback when a binary file
+// can't be delivered any other way).
+//
+// Several strategies are tried in order because no single one works
+// everywhere: the Median native bridge only exists inside the wrapped app,
+// the Web Share API is the most reliable way to get a *binary* file (like a
+// PDF) saved on a phone (it lets the OS "Save to Files"/"Save to device"
+// sheet handle it), the classic <a download> click works well on desktop
+// browsers but is unreliable for blobs in many mobile browsers, and opening
+// a data URL in a new tab is the last-resort fallback (mobile browsers show
+// their built-in PDF viewer, which itself has a Share/Save option).
 async function deliverFile(filename, blob){
+  // 1) Median-wrapped app: use its native download bridge if present.
   if(isMedianApp){
     const bridge = medianBridge();
     if(bridge?.share?.downloadFile){
@@ -2163,18 +2251,51 @@ async function deliverFile(filename, blob){
         const dataUrl = await blobToDataURL(blob);
         await bridge.share.downloadFile({url: dataUrl, open: true});
         return {ok:true, method:'median'};
-      }catch(e){
-        return {ok:false, method:'failed'};
-      }
+      }catch(e){ /* fall through and try the other strategies below */ }
     }
-    return {ok:false, method:'failed'};
   }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(()=>URL.revokeObjectURL(url), 1000);
-  return {ok:true, method:'browser'};
+
+  // 2) Web Share API with a file attachment — the most reliable route on
+  // phones (iOS Safari, Chrome/Android) since it hands the file to the OS
+  // share sheet ("Save to Files", "Save to device", share to an app, etc).
+  // Gated to touch/mobile devices so desktop keeps its normal
+  // straight-to-Downloads-folder behavior below.
+  const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if(isMobileDevice && navigator.share && navigator.canShare){
+    try{
+      const file = new File([blob], filename, {type: blob.type || 'application/octet-stream'});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file], title: filename});
+        return {ok:true, method:'share'};
+      }
+    }catch(e){
+      // The user cancelling the share sheet isn't a failure — don't fall
+      // through to other strategies (that would pop a second save prompt).
+      if(e && e.name==='AbortError') return {ok:true, method:'share'};
+      // Any other share error: fall through and try the remaining strategies.
+    }
+  }
+
+  // 3) Classic anchor-click download — works well on desktop browsers.
+  try{
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    return {ok:true, method:'browser'};
+  }catch(e){ /* fall through to last resort */ }
+
+  // 4) Last resort: open the file as a data URL in a new tab. Mobile
+  // browsers render PDFs in their built-in viewer, from which the user can
+  // still tap Share/Save to keep the file.
+  try{
+    const dataUrl = await blobToDataURL(blob);
+    const win = window.open('', '_blank');
+    if(win){ win.location.href = dataUrl; return {ok:true, method:'open'}; }
+  }catch(e){ /* nothing left to try */ }
+
+  return {ok:false, method:'failed'};
 }
 function triggerDownload(filename, content, mime){
   return deliverFile(filename, new Blob([content], {type:mime}));
@@ -2229,6 +2350,8 @@ async function exportLedgerCSV(txs){
 }
 async function exportLedgerPDF(txs){
   if(!window.jspdf || !window.jspdf.jsPDF){
+      console.log("window.jspdf =", window.jspdf);
+  console.log("window.jsPDF =", window.jsPDF);
     alert('PDF engine is still loading — please wait a moment and try again.');
     return;
   }
@@ -2312,7 +2435,10 @@ async function exportLedgerPDF(txs){
     alert("Couldn't save the PDF on this device. Try the CSV export instead, or open Ledger in your phone's browser to save the PDF statement.");
     closeSheet();
   }
+
+
 }
+
 
 /* ============ SHEET / MODAL CONTROLS ============ */
 // Sheets/modals never change the URL, so on Android the hardware back button
