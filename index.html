@@ -953,7 +953,7 @@ function txRowHTML(t){
   const cat = catById(t.categoryId);
   const src = sourceLabel(t.source);
   return `<div class="list-row">
-    <div class="row-icon" style="background:${cat?cat.color+'22':'#eee'}">${cat?cat.icon:'•'}</div>
+    <div class="row-icon" style="background:${cat?cat.color+'22':'#eee'};color:${cat?cat.color:'#94A0AC'};">${cat?icon(cat.icon,18):icon('tag',18)}</div>
     <div class="row-main">
       <div class="row-title">${t.note||cat?.name||'Transaction'}</div>
       <div class="row-sub">${cat?cat.name:''}${src?' · '+src:''} · ${t.date}</div>
