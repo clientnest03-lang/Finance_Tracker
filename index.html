@@ -2,14 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Ledger — Finance Tracker</title>
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./icon.svg">
 <meta name="theme-color" content="#0F172A">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ledger">
+<meta name="format-detection" content="telephone=no">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
@@ -64,6 +67,20 @@
 }
 #print-area{display:none;}
 *{box-sizing:border-box;}
+html{overscroll-behavior:none;}
+body{overscroll-behavior:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;}
+input,textarea{-webkit-touch-callout:default;}
+.ledger-banner{
+  position:fixed;left:10px;right:10px;top:calc(10px + env(safe-area-inset-top));z-index:60;
+  display:none;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:14px;
+  background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);
+}
+.ledger-banner.show{display:flex;}
+.ledger-banner .lb-icon{width:30px;height:30px;border-radius:9px;background:var(--teal-tint);color:var(--teal-dark);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.ledger-banner .lb-body{flex:1;min-width:0;}
+.ledger-banner .lb-title{font-weight:600;font-size:13.5px;}
+.ledger-banner .lb-text{font-size:12.5px;color:var(--ink-soft);margin-top:2px;line-height:1.4;}
+.ledger-banner .lb-close{background:none;border:none;color:var(--ink-faint);flex-shrink:0;padding:2px;}
 .chat-bubble{max-width:85%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;}
 .chat-bubble.user{align-self:flex-end;background:var(--primary-btn-bg);color:var(--primary-btn-fg);border-bottom-right-radius:4px;}
 .chat-bubble.ai{align-self:flex-start;background:var(--surface-alt);color:var(--ink);border-bottom-left-radius:4px;}
@@ -87,7 +104,7 @@ input,select,textarea{font-family:inherit;}
 
 .topbar{
   display:flex;align-items:center;justify-content:space-between;
-  padding:16px 18px;
+  padding:calc(16px + env(safe-area-inset-top)) 18px 16px;
 }
 .brand{display:flex;align-items:center;gap:10px;}
 .brand-mark{
@@ -308,10 +325,51 @@ input,select,textarea{font-family:inherit;}
 </head>
 <body>
 <div id="app"></div>
+<div class="ledger-banner" id="ledgerBanner"></div>
 <div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
 <div id="print-area"></div>
 
 <script>
+/* ============ MEDIAN / NATIVE APP BRIDGE ============ */
+// Median (and legacy GoNative) inject a small "median" string into the user-agent
+// and, at runtime, a global `median` object with native bridge functions. Detect
+// both so this same file works unmodified in a regular browser, as an installed
+// PWA, and wrapped by Median.
+const isMedianApp = /median|gonative/i.test(navigator.userAgent);
+function medianBridge(){ return (typeof median !== 'undefined' && median) ? median : null; }
+
+// Copy text to the clipboard. Uses Median's native clipboard bridge when running
+// inside the wrapped app (more reliable there than the web Clipboard API, which
+// some WebViews restrict), falling back to the standard web APIs otherwise.
+async function copyText(text){
+  const bridge = medianBridge();
+  if(bridge?.clipboard?.set){
+    try{ bridge.clipboard.set({data:text}); return; }catch(e){}
+  }
+  if(navigator.clipboard?.writeText){
+    try{ await navigator.clipboard.writeText(text); return; }catch(e){}
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly','');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand('copy');
+  textarea.remove();
+  if(!ok) throw new Error('Copy failed');
+}
+
+// True when some form of "share to another app" is available.
+function canSystemShare(){ return !!navigator.share || !!medianBridge()?.share?.sharePage; }
+async function systemShare({title, text, url}){
+  if(navigator.share){ return navigator.share({title, text, url}); }
+  const bridge = medianBridge();
+  if(bridge?.share?.sharePage){ return bridge.share.sharePage({url: url||undefined, text}); }
+  throw new Error('Sharing is not available on this device.');
+}
+
 /* ============ ICONS ============ */
 const ICONS = {
   home:'<path d="M4 11.5 12 4l8 7.5M6 10v9a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1v-9"/>',
@@ -497,41 +555,50 @@ const NOTIF_ENABLED_KEY = 'ledger-notif-enabled-v1';
 const NOTIF_LAST_REMINDER_KEY = 'ledger-last-reminder-date-v1';
 const NOTIF_BUDGET_ALERTS_KEY = 'ledger-notified-budgets-v1';
 
-function notificationsSupported(){ return 'Notification' in window; }
+// Regular Android/iOS WebViews (which is what a Median-wrapped app runs inside)
+// do not implement the web Notification API or Web Push at all — there's no
+// permission prompt and no OS-level delivery. So system notifications only work
+// when this page is opened directly in a real desktop/mobile browser (or a PWA
+// installed straight from one). Inside the wrapped app we still want reminders
+// to work, so we always show an in-app banner as a reliable fallback that
+// requires no permission and works identically everywhere.
+function notificationsSupported(){ return !isMedianApp && 'Notification' in window; }
 function notifPermission(){ return notificationsSupported() ? Notification.permission : 'unsupported'; }
-function notifEnabled(){ return localStorage.getItem(NOTIF_ENABLED_KEY)==='true' && notifPermission()==='granted'; }
+function notifEnabled(){ return localStorage.getItem(NOTIF_ENABLED_KEY)==='true'; }
+function systemNotifEnabled(){ return notifEnabled() && notifPermission()==='granted'; }
 
 async function enableNotifications(){
-  if(!notificationsSupported()){
-    alert('Notifications are not supported in this browser. On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then open it from there and try again.');
-    return;
-  }
-  let perm = Notification.permission;
-  if(perm==='default') perm = await Notification.requestPermission();
-  if(perm!=='granted'){
-    alert('Notifications were blocked. To enable reminders, allow notifications for this site in your browser/device settings.');
-    renderSettingsBody();
-    return;
+  if(notificationsSupported()){
+    let perm = Notification.permission;
+    if(perm==='default') perm = await Notification.requestPermission();
+    if(perm==='denied'){
+      alert('Notifications were blocked. To enable reminders, allow notifications for this site in your browser/device settings.');
+      renderSettingsBody();
+      return;
+    }
+    let reg = null;
+    if('serviceWorker' in navigator){
+      try{ reg = await navigator.serviceWorker.register('./sw.js'); }catch(e){}
+    }
+    if(reg && 'periodicSync' in reg){
+      try{
+        const status = await navigator.permissions.query({name:'periodic-background-sync'});
+        if(status.state==='granted'){
+          await reg.periodicSync.register('ledger-daily-reminder', {minInterval: 20*60*60*1000});
+        }
+      }catch(e){}
+    }
   }
   localStorage.setItem(NOTIF_ENABLED_KEY,'true');
-  let reg = null;
-  if('serviceWorker' in navigator){
-    try{ reg = await navigator.serviceWorker.register('./sw.js'); }catch(e){}
-  }
-  if(reg && 'periodicSync' in reg){
-    try{
-      const status = await navigator.permissions.query({name:'periodic-background-sync'});
-      if(status.state==='granted'){
-        await reg.periodicSync.register('ledger-daily-reminder', {minInterval: 20*60*60*1000});
-      }
-    }catch(e){}
-  }
-  showLedgerNotification('Ledger notifications are on', "You'll get reminders and budget alerts on this device.");
+  showLedgerNotification('Ledger reminders are on', isMedianApp
+    ? "You'll see a banner in the app for budget alerts and daily reminders."
+    : "You'll get reminders and budget alerts on this device.");
   checkFinanceReminders();
   renderSettingsBody();
 }
 function disableNotifications(){
   localStorage.setItem(NOTIF_ENABLED_KEY,'false');
+  hideLedgerBanner();
   if('serviceWorker' in navigator){
     navigator.serviceWorker.getRegistration('./sw.js').then(reg=>{
       if(reg && reg.periodicSync) reg.periodicSync.unregister('ledger-daily-reminder').catch(()=>{});
@@ -541,8 +608,36 @@ function disableNotifications(){
 }
 function toggleNotifications(){ notifEnabled() ? disableNotifications() : enableNotifications(); }
 
+// In-app banner: a small dismissible card pinned to the top of the screen.
+// Lives outside the #app tree (which render() fully replaces) so it survives
+// re-renders untouched.
+let bannerHideTimer = null;
+function showLedgerBanner(title, body){
+  const el = document.getElementById('ledgerBanner');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="lb-icon">${icon('bell',16)}</div>
+    <div class="lb-body">
+      <div class="lb-title">${escapeHTML(title)}</div>
+      <div class="lb-text">${escapeHTML(body)}</div>
+    </div>
+    <button class="lb-close" onclick="hideLedgerBanner()">${icon('x',15)}</button>
+  `;
+  el.classList.add('show');
+  if(bannerHideTimer) clearTimeout(bannerHideTimer);
+  bannerHideTimer = setTimeout(hideLedgerBanner, 8000);
+}
+function hideLedgerBanner(){
+  const el = document.getElementById('ledgerBanner');
+  if(el) el.classList.remove('show');
+}
+
 function showLedgerNotification(title, body, tag){
   if(!notifEnabled()) return;
+  // Always surface the in-app banner — it works whether this is a browser tab,
+  // an installed PWA, or wrapped by Median, and needs no permission.
+  if(!document.hidden) showLedgerBanner(title, body);
+  if(!systemNotifEnabled()) return;
   const opts = {body, icon:'./icon.svg', badge:'./icon.svg', tag: tag||undefined};
   if('serviceWorker' in navigator && navigator.serviceWorker.getRegistration){
     navigator.serviceWorker.getRegistration('./sw.js').then(reg=>{
@@ -1220,7 +1315,7 @@ function openMpesaMessageModal(txId){
     <div class="field">
       <label>Share to</label>
       <div class="tabbar-scroll">
-        ${navigator.share?`<button class="chip" onclick="shareViaSystem('${tx.id}')">${icon('share',14)} More apps</button>`:''}
+        ${canSystemShare()?`<button class="chip" onclick="shareViaSystem('${tx.id}')">${icon('share',14)} More apps</button>`:''}
         <button class="chip" onclick="shareToWhatsapp('${tx.id}')">WhatsApp</button>
         <button class="chip" onclick="shareToTelegram('${tx.id}')">Telegram</button>
         <button class="chip" onclick="shareToSms('${tx.id}')">SMS</button>
@@ -1244,7 +1339,7 @@ async function shareViaSystem(txId){
   const text = mpesaShareText(txId);
   if(!text) return;
   try{
-    await navigator.share({ title:`M-Pesa ${tx.type==='income'?'income':'expense'} - ${fmt(tx.amount)}`, text });
+    await systemShare({ title:`M-Pesa ${tx.type==='income'?'income':'expense'} - ${fmt(tx.amount)}`, text });
     showMpesaShareStatus('Shared successfully.', 'info');
   }catch(e){
     if(e && e.name==='AbortError') return;
@@ -1254,12 +1349,14 @@ async function shareViaSystem(txId){
 function shareToWhatsapp(txId){
   const text = mpesaShareText(txId);
   if(!text) return;
-  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+  if(isMedianApp) window.location.href = url; else window.open(url, '_blank');
 }
 function shareToTelegram(txId){
   const text = mpesaShareText(txId);
   if(!text) return;
-  window.open(`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`, '_blank');
+  const url = `https://t.me/share/url?url=&text=${encodeURIComponent(text)}`;
+  if(isMedianApp) window.location.href = url; else window.open(url, '_blank');
 }
 function shareToSms(txId){
   const text = mpesaShareText(txId);
@@ -1282,23 +1379,6 @@ async function copyMpesaMessage(txId){
   }catch(e){
     showMpesaShareStatus('Could not copy automatically. You can copy the message from above.', 'danger');
   }
-}
-
-async function copyText(text){
-  if(navigator.clipboard?.writeText){
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly','');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const ok = document.execCommand('copy');
-  textarea.remove();
-  if(!ok) throw new Error('Copy failed');
 }
 
 function showMpesaShareStatus(message, kind){
@@ -1638,7 +1718,7 @@ function renderSettingsBody(){
   const supported = notificationsSupported();
   const perm = notifPermission();
   const on = notifEnabled();
-  const notifStatus = !supported ? 'Not supported in this browser' : perm==='denied' ? 'Blocked in browser settings' : on ? 'On for this device' : 'Off';
+  const notifStatus = (supported && perm==='denied') ? 'System notifications blocked — in-app banner still works' : on ? 'On for this device' : 'Off';
   document.getElementById('sheet').innerHTML = `
     <div class="sheet-head"><div class="sheet-title">Settings</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
     <div class="section-title first">Appearance</div>
@@ -1664,9 +1744,9 @@ function renderSettingsBody(){
             <div class="row-sub">${notifStatus}</div>
           </div>
         </div>
-        <button class="btn btn-secondary btn-sm" ${!supported||perm==='denied'?'disabled':''} onclick="toggleNotifications()">${on?'Disable':'Enable'}</button>
+        <button class="btn btn-secondary btn-sm" ${supported&&perm==='denied'?'disabled':''} onclick="toggleNotifications()">${on?'Disable':'Enable'}</button>
       </div>
-      <div class="row-sub" style="margin-top:10px;">Notifies this device when you're nearing or over a budget, and reminds you in the evening if you haven't logged anything today. On iPhone, add Ledger to your Home Screen first (Share → Add to Home Screen) for notifications to work.</div>
+      <div class="row-sub" style="margin-top:10px;">Shows a banner in the app when you're nearing or over a budget, and reminds you in the evening if you haven't logged anything today.${supported?' On this device you\'ll also get a system notification when the app is in the background.':''}</div>
     </div>
     <div class="section-title first">Export</div>
     <div class="card" style="box-shadow:none;margin-bottom:14px;">
@@ -2043,7 +2123,7 @@ function openExportModal(){
       <button class="btn btn-secondary btn-block" onclick="runExport('csv')">${icon('download',16)} CSV file</button>
       <button class="btn btn-primary btn-block" onclick="runExport('pdf')">${icon('download',16)} PDF statement</button>
     </div>
-    <div class="row-sub" style="margin-top:10px;">Both download straight to your device — CSV opens in Excel/Sheets, PDF opens in any PDF viewer.</div>
+    <div class="row-sub" style="margin-top:10px;">CSV opens in Excel/Sheets, PDF opens in any PDF viewer. If a direct download isn't available on this device, the CSV will be copied to your clipboard instead.</div>
   `;
   showSheet();
 }
@@ -2064,28 +2144,61 @@ function getExportTx(){
   }
   return txs.sort((a,b)=>a.date.localeCompare(b.date));
 }
-function triggerDownload(filename, content, mime){
-  const blob = new Blob([content], {type:mime});
+function blobToDataURL(blob){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+// Delivers a generated file to the user. Returns {ok, method} — method is
+// 'median', 'browser', or 'failed' so callers can tailor their messaging
+// (e.g. offer a clipboard-copy fallback when a binary file can't be delivered).
+async function deliverFile(filename, blob){
+  if(isMedianApp){
+    const bridge = medianBridge();
+    if(bridge?.share?.downloadFile){
+      try{
+        const dataUrl = await blobToDataURL(blob);
+        await bridge.share.downloadFile({url: dataUrl, open: true});
+        return {ok:true, method:'median'};
+      }catch(e){
+        return {ok:false, method:'failed'};
+      }
+    }
+    return {ok:false, method:'failed'};
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  return {ok:true, method:'browser'};
+}
+function triggerDownload(filename, content, mime){
+  return deliverFile(filename, new Blob([content], {type:mime}));
 }
 function csvEscape(v){
   const s = String(v ?? '');
   return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
 }
-function runExport(kind){
+async function runExport(kind){
   const txs = getExportTx();
   if(!txs.length){
     alert('No transactions match that range/business.');
     return;
   }
-  if(kind==='csv') exportLedgerCSV(txs);
-  else exportLedgerPDF(txs);
+  const btns = document.querySelectorAll('.form-actions .btn');
+  btns.forEach(b=>b.disabled = true);
+  try{
+    if(kind==='csv') await exportLedgerCSV(txs);
+    else await exportLedgerPDF(txs);
+  } finally {
+    btns.forEach(b=>b.disabled = false);
+  }
 }
-function exportLedgerCSV(txs){
+async function exportLedgerCSV(txs){
   const rows = [['Date','Type','Category','Business/Source','Note','Amount (KES)']];
   let balance = 0;
   txs.forEach(t=>{
@@ -2099,10 +2212,22 @@ function exportLedgerCSV(txs){
   rows.push(['','','','','Total expense', -totalExpense]);
   rows.push(['','','','','Net', totalIncome-totalExpense]);
   const csv = rows.map(r=>r.map(csvEscape).join(',')).join('\n');
-  triggerDownload(`ledger-${todayISO()}.csv`, csv, 'text/csv;charset=utf-8;');
-  closeSheet();
+  const result = await triggerDownload(`ledger-${todayISO()}.csv`, csv, 'text/csv;charset=utf-8;');
+  if(result.ok){
+    closeSheet();
+  } else {
+    // Native file delivery didn't work in this app build — copying the CSV
+    // text is a guaranteed fallback that always works.
+    try{
+      await copyText(csv);
+      alert("Couldn't save the file directly, so the CSV was copied to your clipboard instead — paste it into Notes, Sheets, or Excel to keep it.");
+    }catch(e){
+      alert("Couldn't save or copy the file on this device. Try opening Ledger in your phone's browser instead.");
+    }
+    closeSheet();
+  }
 }
-function exportLedgerPDF(txs){
+async function exportLedgerPDF(txs){
   if(!window.jspdf || !window.jspdf.jsPDF){
     alert('PDF engine is still loading — please wait a moment and try again.');
     return;
@@ -2179,13 +2304,43 @@ function exportLedgerPDF(txs){
     doc.text(`Page ${i} of ${pageCount}`, 515, 820);
   }
 
-  doc.save(`ledger-${todayISO()}.pdf`);
-  closeSheet();
+  const filename = `ledger-${todayISO()}.pdf`;
+  const result = await deliverFile(filename, doc.output('blob'));
+  if(result.ok){
+    closeSheet();
+  } else {
+    alert("Couldn't save the PDF on this device. Try the CSV export instead, or open Ledger in your phone's browser to save the PDF statement.");
+    closeSheet();
+  }
 }
 
 /* ============ SHEET / MODAL CONTROLS ============ */
-function showSheet(){ document.getElementById('overlay').classList.add('show'); }
-function closeSheet(){ document.getElementById('overlay').classList.remove('show'); }
+// Sheets/modals never change the URL, so on Android the hardware back button
+// would otherwise close the whole app immediately while one is open — there's
+// no other history entry to go back to first. Push a lightweight history
+// entry whenever a sheet opens so back closes the sheet instead, and only
+// falls through to exiting the app on a second press. This works the same
+// way whether the page is a plain browser tab, an installed PWA, or wrapped
+// by Median (which relies on the WebView's own back-navigation behavior).
+let sheetHistoryPushed = false;
+function showSheet(){
+  document.getElementById('overlay').classList.add('show');
+  if(!sheetHistoryPushed){
+    history.pushState({ledgerSheet:true}, '');
+    sheetHistoryPushed = true;
+  }
+}
+function closeSheet(){
+  document.getElementById('overlay').classList.remove('show');
+  if(sheetHistoryPushed){
+    sheetHistoryPushed = false;
+    if(history.state && history.state.ledgerSheet) history.back();
+  }
+}
+window.addEventListener('popstate', ()=>{
+  sheetHistoryPushed = false;
+  document.getElementById('overlay').classList.remove('show');
+});
 document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') closeSheet(); });
 
 /* ============ INIT ============ */
