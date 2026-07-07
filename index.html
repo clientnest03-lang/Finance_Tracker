@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Ledger — Finance Tracker</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon.svg">
+<meta name="theme-color" content="#0F172A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
@@ -57,27 +63,6 @@
   --shadow:0 1px 2px rgba(0,0,0,.28), 0 10px 28px -14px rgba(0,0,0,.70);
 }
 #print-area{display:none;}
-@media print{
-  body *{visibility:hidden;}
-  #print-area, #print-area *{visibility:visible;}
-  #print-area{display:block;position:absolute;top:0;left:0;width:100%;padding:24px;background:#fff;color:#0F172A;}
-  .p-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0F172A;padding-bottom:12px;margin-bottom:16px;}
-  .p-title{font-family:'Space Grotesk',system-ui,sans-serif;font-size:22px;font-weight:700;margin:0;}
-  .p-sub{font-size:12px;color:#5B6472;margin-top:4px;}
-  .p-meta{text-align:right;font-size:12px;color:#5B6472;}
-  .p-summary{display:flex;gap:18px;margin-bottom:16px;}
-  .p-summary div{border:1px solid #E4E7E5;border-radius:8px;padding:10px 14px;flex:1;}
-  .p-summary .p-label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#5B6472;}
-  .p-summary .p-value{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;margin-top:2px;}
-  table.p-table{width:100%;border-collapse:collapse;font-size:11.5px;}
-  table.p-table th{text-align:left;border-bottom:1.5px solid #0F172A;padding:6px 6px;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:#5B6472;}
-  table.p-table td{padding:6px 6px;border-bottom:1px solid #E4E7E5;}
-  table.p-table td.amt{font-family:'IBM Plex Mono',monospace;text-align:right;white-space:nowrap;}
-  table.p-table td.amt.income{color:#0A7A70;}
-  table.p-table td.amt.expense{color:#C0362C;}
-  .p-footer{margin-top:14px;font-size:10.5px;color:#94A0AC;text-align:center;}
-  @page{margin:14mm;}
-}
 *{box-sizing:border-box;}
 .chat-bubble{max-width:85%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;}
 .chat-bubble.user{align-self:flex-end;background:var(--primary-btn-bg);color:var(--primary-btn-fg);border-bottom-right-radius:4px;}
@@ -318,6 +303,8 @@ input,select,textarea{font-family:inherit;}
 .tabbar-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;margin-bottom:4px;}
 .tabbar-scroll::-webkit-scrollbar{display:none;}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -351,6 +338,25 @@ const ICONS = {
   file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h6"/><path d="M8 9h2"/>',
   download:'<path d="M12 3v12"/><polyline points="7 11 12 16 17 11"/><path d="M5 19h14"/>',
   sparkle:'<path d="M12 2 14 9 21 12 14 15 12 22 10 15 3 12 10 9 Z"/>',
+  bell:'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  mic:'<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/><path d="M8 22h8"/>',
+  volume:'<path d="M11 5 6 9H2v6h4l5 4Z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>',
+  utensils:'<path d="M3 2v7a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/>',
+  car:'<path d="M5 11 6.5 6.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11"/><rect x="3" y="11" width="18" height="6" rx="2"/><circle cx="7.5" cy="17" r="1.5"/><circle cx="16.5" cy="17" r="1.5"/>',
+  fuel:'<line x1="3" y1="22" x2="15" y2="22"/><line x1="4" y1="9" x2="14" y2="9"/><path d="M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18"/><path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2v0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"/>',
+  droplet:'<path d="M12 2s6 7.5 6 12a6 6 0 0 1-12 0c0-4.5 6-12 6-12Z"/>',
+  screen:'<rect x="3" y="5" width="18" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="18" x2="12" y2="21"/>',
+  bag:'<path d="M6 8h12l-1 12a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+  pill:'<path d="M10.5 20.5 3.5 13.5a5 5 0 1 1 7.07-7.07l7 7a5 5 0 1 1-7.07 7.07Z"/><line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/>',
+  book:'<path d="M12 5C10 3.5 6.5 3 4 3.5V19c2.5-.5 6 0 8 1.5 2-1.5 5.5-2 8-1.5V3.5C17.5 3 14 3.5 12 5Z"/><line x1="12" y1="5" x2="12" y2="20.5"/>',
+  plane:'<path d="M21 16v-2l-8-5V4a1.5 1.5 0 0 0-3 0v5l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5Z"/>',
+  coffee:'<path d="M17 8h2a2 2 0 0 1 2 2v1a4 4 0 0 1-4 4h-1"/><path d="M4 8h13v6a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8Z"/><line x1="6" y1="2" x2="6" y2="4"/><line x1="10" y1="2" x2="10" y2="4"/><line x1="14" y1="2" x2="14" y2="4"/>',
+  phone:'<rect x="6" y="2" width="12" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>',
+  leaf:'<path d="M11 20A7 7 0 0 1 4 13c0-4 8-9 15-9 0 7-5 15-9 15a7 7 0 0 1-1-.06Z"/><path d="M4 20 12 12"/>',
+  landmark:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 21 8 3 8"/>',
+  receipt:'<path d="M4 2h16v20l-2-1.5L16 22l-2-1.5L12 22l-2-1.5L8 22l-2-1.5L4 22V2Z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="12" y2="15"/>',
+  tag:'<path d="M12.59 2.59a2 2 0 0 0-1.42-.59H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.99 9a2 2 0 0 0 2.83 0l7.17-7.17a2 2 0 0 0 0-2.83l-9-8.99Z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>',
+  laptop:'<rect x="4" y="4" width="16" height="10" rx="1"/><path d="M2 18h20l-1.5-3h-17Z"/>',
 };
 function icon(name,size=18,stroke=2){
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
@@ -358,26 +364,76 @@ function icon(name,size=18,stroke=2){
 
 /* ============ CONSTANTS ============ */
 const CAT_COLORS = ['#0D9488','#C2760C','#3B6FA0','#8E5FBF','#C0362C','#4C8B5A','#B05A9E','#607089'];
-const CAT_ICONS = ['💰','🍽️','🚗','🏠','💡','🎬','🛍️','💊','📚','✈️','🎁','📈','🧾','☕','📱','🐄'];
+const CAT_ICON_FALLBACK_POOL = ['tag','receipt','wallet','briefcase','bag','bulb'];
+const CAT_ICON_RULES = [
+  {keys:['food','grocery','groceries','supermarket','meal','restaurant','eat','lunch','dinner','breakfast','kitchen'], icon:'utensils'},
+  {keys:['transport','fare','matatu','uber','bolt','taxi','bus','car','ride'], icon:'car'},
+  {keys:['fuel','petrol','diesel','gas'], icon:'fuel'},
+  {keys:['rent','housing','mortgage','house','home'], icon:'home'},
+  {keys:['electric','power','light','kplc'], icon:'bulb'},
+  {keys:['water'], icon:'droplet'},
+  {keys:['entertainment','movie','netflix','cinema','fun','game','games','music','spotify'], icon:'screen'},
+  {keys:['shopping','clothes','clothing','fashion','shop'], icon:'bag'},
+  {keys:['health','medic','hospital','doctor','pharmacy','clinic','dental'], icon:'pill'},
+  {keys:['school','education','fees','tuition','book','books','course','university','college'], icon:'book'},
+  {keys:['travel','flight','trip','vacation','holiday'], icon:'plane'},
+  {keys:['gift','donation','charity'], icon:'bag'},
+  {keys:['invest','stocks','shares','dividend','saving'], icon:'up'},
+  {keys:['bill','utility','utilities','subscription'], icon:'receipt'},
+  {keys:['coffee','cafe','tea'], icon:'coffee'},
+  {keys:['phone','airtime','bundle','internet','wifi'], icon:'phone'},
+  {keys:['farm','agriculture','cattle','livestock','dairy'], icon:'leaf'},
+  {keys:['salary','wage','payroll','income'], icon:'wallet'},
+  {keys:['business','client','freelance','project','contract','consult'], icon:'briefcase'},
+  {keys:['church','tithe','offering'], icon:'landmark'},
+];
+function hashStr(s){ let h=0; for(let i=0;i<s.length;i++){ h=(h*31 + s.charCodeAt(i))|0; } return Math.abs(h); }
+function guessCategoryIcon(name, type){
+  const n = (name||'').toLowerCase();
+  for(const rule of CAT_ICON_RULES){
+    if(rule.keys.some(k=>n.includes(k))) return rule.icon;
+  }
+  if(!n) return type==='income' ? 'wallet' : 'receipt';
+  return CAT_ICON_FALLBACK_POOL[hashStr(n) % CAT_ICON_FALLBACK_POOL.length];
+}
+function guessCategoryColor(){
+  const counts = CAT_COLORS.map(()=>0);
+  (state?.categories||[]).forEach(c=>{
+    const idx = CAT_COLORS.indexOf(c.color);
+    if(idx>=0) counts[idx]++;
+  });
+  let minIdx = 0;
+  for(let i=1;i<counts.length;i++) if(counts[i]<counts[minIdx]) minIdx = i;
+  return CAT_COLORS[minIdx];
+}
+// Small inline category icon for use next to a category name in text contexts (not inside <option> — those stay plain text).
+function catIconInline(cat, size=14){
+  if(!cat) return '';
+  return `<span style="display:inline-flex;vertical-align:-3px;color:${cat.color};margin-right:5px;">${icon(cat.icon,size)}</span>`;
+}
 const LOGO_SRC = 'assets/financial-tracker-logo.png';
-const CURRENCY = new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',maximumFractionDigits:0});
-function fmt(n){ return CURRENCY.format(Math.round(n||0)); }
+const CURRENCY = new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',minimumFractionDigits:0,maximumFractionDigits:2});
+function fmt(n){
+  n = n||0;
+  const rounded = Math.round(n*100)/100;
+  return CURRENCY.format(rounded);
+}
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 
 /* ============ SEED DATA ============ */
 function seedData(){
   const cats = [
-    {id:uid(),name:'Salary',type:'income',color:'#0D9488',icon:'💰'},
-    {id:uid(),name:'Business Income',type:'income',color:'#3B6FA0',icon:'📈'},
-    {id:uid(),name:'Freelance',type:'income',color:'#8E5FBF',icon:'💻'},
-    {id:uid(),name:'Gift',type:'income',color:'#C2760C',icon:'🎁'},
-    {id:uid(),name:'Food',type:'expense',color:'#C0362C',icon:'🍽️'},
-    {id:uid(),name:'Transport',type:'expense',color:'#607089',icon:'🚗'},
-    {id:uid(),name:'Rent',type:'expense',color:'#8E5FBF',icon:'🏠'},
-    {id:uid(),name:'Utilities',type:'expense',color:'#C2760C',icon:'💡'},
-    {id:uid(),name:'Savings',type:'expense',color:'#4C8B5A',icon:'📈'},
-    {id:uid(),name:'Business Expense',type:'expense',color:'#3B6FA0',icon:'🧾'},
+    {id:uid(),name:'Salary',type:'income',color:'#0D9488',icon:'wallet'},
+    {id:uid(),name:'Business Income',type:'income',color:'#3B6FA0',icon:'up'},
+    {id:uid(),name:'Freelance',type:'income',color:'#8E5FBF',icon:'laptop'},
+    {id:uid(),name:'Gift',type:'income',color:'#C2760C',icon:'bag'},
+    {id:uid(),name:'Food',type:'expense',color:'#C0362C',icon:'utensils'},
+    {id:uid(),name:'Transport',type:'expense',color:'#607089',icon:'car'},
+    {id:uid(),name:'Rent',type:'expense',color:'#8E5FBF',icon:'home'},
+    {id:uid(),name:'Utilities',type:'expense',color:'#C2760C',icon:'bulb'},
+    {id:uid(),name:'Savings',type:'expense',color:'#4C8B5A',icon:'up'},
+    {id:uid(),name:'Business Expense',type:'expense',color:'#3B6FA0',icon:'receipt'},
   ];
   const byName = n => cats.find(c=>c.name===n).id;
   const biz = [{id:uid(),name:'Client Nest'}];
@@ -436,6 +492,102 @@ function escapeHTML(value){
   }[ch]));
 }
 
+/* ============ NOTIFICATIONS ============ */
+const NOTIF_ENABLED_KEY = 'ledger-notif-enabled-v1';
+const NOTIF_LAST_REMINDER_KEY = 'ledger-last-reminder-date-v1';
+const NOTIF_BUDGET_ALERTS_KEY = 'ledger-notified-budgets-v1';
+
+function notificationsSupported(){ return 'Notification' in window; }
+function notifPermission(){ return notificationsSupported() ? Notification.permission : 'unsupported'; }
+function notifEnabled(){ return localStorage.getItem(NOTIF_ENABLED_KEY)==='true' && notifPermission()==='granted'; }
+
+async function enableNotifications(){
+  if(!notificationsSupported()){
+    alert('Notifications are not supported in this browser. On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then open it from there and try again.');
+    return;
+  }
+  let perm = Notification.permission;
+  if(perm==='default') perm = await Notification.requestPermission();
+  if(perm!=='granted'){
+    alert('Notifications were blocked. To enable reminders, allow notifications for this site in your browser/device settings.');
+    renderSettingsBody();
+    return;
+  }
+  localStorage.setItem(NOTIF_ENABLED_KEY,'true');
+  let reg = null;
+  if('serviceWorker' in navigator){
+    try{ reg = await navigator.serviceWorker.register('./sw.js'); }catch(e){}
+  }
+  if(reg && 'periodicSync' in reg){
+    try{
+      const status = await navigator.permissions.query({name:'periodic-background-sync'});
+      if(status.state==='granted'){
+        await reg.periodicSync.register('ledger-daily-reminder', {minInterval: 20*60*60*1000});
+      }
+    }catch(e){}
+  }
+  showLedgerNotification('Ledger notifications are on', "You'll get reminders and budget alerts on this device.");
+  checkFinanceReminders();
+  renderSettingsBody();
+}
+function disableNotifications(){
+  localStorage.setItem(NOTIF_ENABLED_KEY,'false');
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.getRegistration('./sw.js').then(reg=>{
+      if(reg && reg.periodicSync) reg.periodicSync.unregister('ledger-daily-reminder').catch(()=>{});
+    }).catch(()=>{});
+  }
+  renderSettingsBody();
+}
+function toggleNotifications(){ notifEnabled() ? disableNotifications() : enableNotifications(); }
+
+function showLedgerNotification(title, body, tag){
+  if(!notifEnabled()) return;
+  const opts = {body, icon:'./icon.svg', badge:'./icon.svg', tag: tag||undefined};
+  if('serviceWorker' in navigator && navigator.serviceWorker.getRegistration){
+    navigator.serviceWorker.getRegistration('./sw.js').then(reg=>{
+      if(reg) reg.showNotification(title, opts);
+      else new Notification(title, opts);
+    }).catch(()=>{ try{ new Notification(title, opts); }catch(e){} });
+  } else {
+    try{ new Notification(title, opts); }catch(e){}
+  }
+}
+
+function checkFinanceReminders(){
+  if(!state || !notifEnabled()) return;
+  const today = todayISO();
+  const lastReminder = localStorage.getItem(NOTIF_LAST_REMINDER_KEY);
+  const hour = new Date().getHours();
+  const loggedToday = state.transactions.some(t=>t.date===today);
+  if(lastReminder!==today && hour>=18 && !loggedToday){
+    showLedgerNotification("Log today's transactions", "You haven't recorded any income or expenses today — keep your Ledger up to date.", 'ledger-daily-log');
+    localStorage.setItem(NOTIF_LAST_REMINDER_KEY, today);
+  }
+  let notified = {};
+  try{ notified = JSON.parse(localStorage.getItem(NOTIF_BUDGET_ALERTS_KEY)||'{}'); }catch(e){ notified = {}; }
+  state.budgets.forEach(b=>{
+    if(!b.amount) return;
+    const key = currentPeriodKey(b.period);
+    const spent = state.transactions
+      .filter(t=>t.type==='expense' && t.categoryId===b.categoryId && txInPeriod(t,b.period,key))
+      .reduce((s,t)=>s+t.amount,0);
+    const pct = spent / b.amount;
+    const cat = catById(b.categoryId);
+    const catName = cat ? cat.name : 'Budget';
+    const overKey = `${b.id}:${key}:over`;
+    const warnKey = `${b.id}:${key}:warn`;
+    if(pct>=1 && !notified[overKey]){
+      showLedgerNotification(`${catName} budget exceeded`, `You've spent ${fmt(spent)} of your ${fmt(b.amount)} ${catName} budget this ${b.period.replace('ly','')}.`, overKey);
+      notified[overKey] = true;
+    } else if(pct>=0.9 && pct<1 && !notified[warnKey]){
+      showLedgerNotification(`${catName} budget almost reached`, `You've used ${Math.round(pct*100)}% of your ${fmt(b.amount)} ${catName} budget this ${b.period.replace('ly','')}.`, warnKey);
+      notified[warnKey] = true;
+    }
+  });
+  try{ localStorage.setItem(NOTIF_BUDGET_ALERTS_KEY, JSON.stringify(notified)); }catch(e){}
+}
+
 async function loadState(){
   try{
     const saved = localStorage.getItem('ledger-data-v1');
@@ -443,8 +595,27 @@ async function loadState(){
   }catch(e){
     state = seedData();
   }
+  migrateCategoryIcons();
   persist();
   render();
+  checkFinanceReminders();
+}
+function migrateCategoryIcons(){
+  const EMOJI_TO_ICON = {
+    '💰':'wallet','🍽️':'utensils','🚗':'car','🏠':'home','💡':'bulb','🎬':'screen',
+    '🛍️':'bag','💊':'pill','📚':'book','✈️':'plane','🎁':'bag','📈':'up','🧾':'receipt',
+    '☕':'coffee','📱':'phone','🐄':'leaf','💼':'briefcase','⛪':'landmark','⛽':'fuel',
+    '🚿':'droplet','💻':'laptop'
+  };
+  if(!state?.categories) return;
+  let changed = false;
+  state.categories.forEach(c=>{
+    if(c.icon && !ICONS[c.icon]){
+      c.icon = EMOJI_TO_ICON[c.icon] || guessCategoryIcon(c.name, c.type);
+      changed = true;
+    }
+  });
+  if(changed){ try{ localStorage.setItem('ledger-data-v1', JSON.stringify(state)); }catch(e){} }
 }
 function persist(){
   clearTimeout(saveTimer);
@@ -454,7 +625,7 @@ function persist(){
     }catch(e){}
   },350);
 }
-function mutate(fn){ fn(state); persist(); render(); }
+function mutate(fn){ fn(state); persist(); render(); checkFinanceReminders(); }
 
 /* ============ PERIOD HELPERS ============ */
 function isoWeekKey(dateStr){
@@ -676,7 +847,7 @@ function donutChart(breakdown,total){
       ${breakdown.slice(0,6).map(b=>`
         <div class="legend-item">
           <div class="legend-dot" style="background:${b.cat.color}"></div>
-          <div class="legend-name">${b.cat.icon} ${b.cat.name}</div>
+          <div class="legend-name">${catIconInline(b.cat)}${b.cat.name}</div>
           <div class="legend-val mono">${Math.round(b.amount/total*100)}%</div>
         </div>`).join('')}
     </div>
@@ -712,7 +883,7 @@ function renderTransactions(){
       ${['all','income','expense'].map(t=>`<button class="chip ${f.type===t?'selected':''}" onclick="setTxTypeFilter('${t}')">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}
       <select onchange="setTxCatFilter(this.value)" style="border:none;background:var(--surface-alt);border-radius:10px;padding:8px 10px;font-size:13px;font-weight:600;">
         <option value="all">All categories</option>
-        ${state.categories.map(c=>`<option value="${c.id}" ${f.categoryId===c.id?'selected':''}>${c.icon} ${c.name}</option>`).join('')}
+        ${state.categories.map(c=>`<option value="${c.id}" ${f.categoryId===c.id?'selected':''}>${c.name}</option>`).join('')}
       </select>
     </div>
     <div class="card" style="margin-top:8px;">
@@ -764,12 +935,12 @@ function renderTxModalBody(type, editing){
     <form id="tx-form" onsubmit="return submitTx(event,'${type}','${editing?editing.id:''}')">
       <div class="field">
         <label>Amount (KES)</label>
-        <input type="number" step="1" min="0" name="amount" required class="mono" value="${editing?editing.amount:''}" placeholder="0">
+        <input type="number" step="0.01" inputmode="decimal" min="0" name="amount" required class="mono" value="${editing?editing.amount:''}" placeholder="0.00">
       </div>
       <div class="field">
         <label>Category</label>
         <select name="categoryId" required>
-          ${cats.map(c=>`<option value="${c.id}" ${editing?.categoryId===c.id?'selected':''}>${c.icon} ${c.name}</option>`).join('')}
+          ${cats.map(c=>`<option value="${c.id}" ${editing?.categoryId===c.id?'selected':''}>${c.name}</option>`).join('')}
         </select>
       </div>
       ${type==='income'?`
@@ -984,7 +1155,7 @@ function renderMpesaCategoryStep(parsed){
       <div class="field">
         <label>Category for this ${parsed.type}</label>
         <select name="categoryId" required>
-          ${cats.map(c=>`<option value="${c.id}">${c.icon} ${escapeHTML(c.name)}</option>`).join('')}
+          ${cats.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -1039,42 +1210,77 @@ function openMpesaMessageModal(txId){
         <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${tx.date}</div></div>
         <div class="parse-item"><div class="parse-label">${tx.type==='income'?'From':'Recipient'}</div><div class="parse-value">${escapeHTML(tx.mpesa.party || 'M-Pesa')}</div></div>
       </div>
-      <div class="parse-message">${cat?`${cat.icon} ${escapeHTML(cat.name)}`:'Uncategorized'}</div>
+      <div class="parse-message">${cat?`${catIconInline(cat)}${escapeHTML(cat.name)}`:'Uncategorized'}</div>
     </div>
     <div class="field">
       <label>Original message</label>
       <div class="message-box">${escapeHTML(tx.mpesa.message)}</div>
     </div>
     <div id="mpesa-share-status"></div>
+    <div class="field">
+      <label>Share to</label>
+      <div class="tabbar-scroll">
+        ${navigator.share?`<button class="chip" onclick="shareViaSystem('${tx.id}')">${icon('share',14)} More apps</button>`:''}
+        <button class="chip" onclick="shareToWhatsapp('${tx.id}')">WhatsApp</button>
+        <button class="chip" onclick="shareToTelegram('${tx.id}')">Telegram</button>
+        <button class="chip" onclick="shareToSms('${tx.id}')">SMS</button>
+        <button class="chip" onclick="shareToEmail('${tx.id}')">Email</button>
+        <button class="chip" onclick="copyMpesaMessage('${tx.id}')">Copy</button>
+      </div>
+    </div>
     <div class="form-actions">
-      <button class="btn btn-primary" onclick="shareMpesaMessage('${tx.id}')">${icon('share',16)} Share message</button>
-      <button class="btn btn-secondary" onclick="openTxModal('${tx.id}')">${icon('edit',16)} Edit</button>
+      <button class="btn btn-secondary btn-block" onclick="openTxModal('${tx.id}')">${icon('edit',16)} Edit</button>
     </div>
   `;
   showSheet();
 }
 
-async function shareMpesaMessage(txId){
+function mpesaShareText(txId){
   const tx = state.transactions.find(t=>t.id===txId);
-  if(!tx?.mpesa?.message) return;
-  const title = `M-Pesa ${tx.type==='income'?'income':'expense'} - ${fmt(tx.amount)}`;
-  const text = tx.mpesa.message;
+  return tx?.mpesa?.message || null;
+}
+async function shareViaSystem(txId){
+  const tx = state.transactions.find(t=>t.id===txId);
+  const text = mpesaShareText(txId);
+  if(!text) return;
   try{
-    if(navigator.share){
-      await navigator.share({title, text});
-      showMpesaShareStatus('Shared successfully.', 'info');
-      return;
-    }
-    await copyText(text);
-    showMpesaShareStatus('Sharing is not available here, so the message was copied.', 'info');
+    await navigator.share({ title:`M-Pesa ${tx.type==='income'?'income':'expense'} - ${fmt(tx.amount)}`, text });
+    showMpesaShareStatus('Shared successfully.', 'info');
   }catch(e){
-    if(e && e.name === 'AbortError') return;
-    try{
-      await copyText(text);
-      showMpesaShareStatus('Could not open sharing, so the message was copied.', 'info');
-    }catch(copyError){
-      showMpesaShareStatus('Could not share automatically. You can copy the message from above.', 'danger');
-    }
+    if(e && e.name==='AbortError') return;
+    showMpesaShareStatus('Could not open the share sheet.', 'danger');
+  }
+}
+function shareToWhatsapp(txId){
+  const text = mpesaShareText(txId);
+  if(!text) return;
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+}
+function shareToTelegram(txId){
+  const text = mpesaShareText(txId);
+  if(!text) return;
+  window.open(`https://t.me/share/url?url=&text=${encodeURIComponent(text)}`, '_blank');
+}
+function shareToSms(txId){
+  const text = mpesaShareText(txId);
+  if(!text) return;
+  window.location.href = `sms:?body=${encodeURIComponent(text)}`;
+}
+function shareToEmail(txId){
+  const tx = state.transactions.find(t=>t.id===txId);
+  const text = mpesaShareText(txId);
+  if(!text) return;
+  const subject = encodeURIComponent(`M-Pesa ${tx.type==='income'?'income':'expense'} - ${fmt(tx.amount)}`);
+  window.location.href = `mailto:?subject=${subject}&body=${encodeURIComponent(text)}`;
+}
+async function copyMpesaMessage(txId){
+  const text = mpesaShareText(txId);
+  if(!text) return;
+  try{
+    await copyText(text);
+    showMpesaShareStatus('Copied to clipboard.', 'info');
+  }catch(e){
+    showMpesaShareStatus('Could not copy automatically. You can copy the message from above.', 'danger');
   }
 }
 
@@ -1136,7 +1342,7 @@ function renderBudgets(){
         const over = spent>b.amount;
         return `<div style="padding:10px 4px;border-bottom:1px solid var(--border);">
           <div class="row-flex">
-            <div class="row-title">${cat?.icon} ${cat?.name}</div>
+            <div class="row-title">${catIconInline(cat)}${cat?.name}</div>
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="mono" style="font-size:13px;font-weight:600;color:${over?'var(--red)':'var(--ink)'}">${fmt(spent)} / ${fmt(b.amount)}</span>
               <button class="tiny-btn" onclick="deleteBudget('${b.id}')">${icon('trash',15)}</button>
@@ -1157,14 +1363,14 @@ function openBudgetModal(){
     <div class="sheet-head"><div class="sheet-title">Add budget</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
     <form onsubmit="return submitBudget(event)">
       <div class="field"><label>Category</label>
-        <select name="categoryId" required>${expCats.map(c=>`<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</select>
+        <select name="categoryId" required>${expCats.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       </div>
       <div class="field"><label>Period</label>
         <select name="period" required>
           <option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option><option value="yearly">Yearly</option>
         </select>
       </div>
-      <div class="field"><label>Budget amount (KES)</label><input type="number" name="amount" min="1" required class="mono"></div>
+      <div class="field"><label>Budget amount (KES)</label><input type="number" step="0.01" inputmode="decimal" name="amount" min="1" required class="mono"></div>
       <button type="submit" class="btn btn-primary btn-block">Save budget</button>
     </form>`;
   showSheet();
@@ -1184,7 +1390,7 @@ function openTargetModal(){
           <option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option><option value="yearly">Yearly</option>
         </select>
       </div>
-      <div class="field"><label>Target amount (KES)</label><input type="number" name="amount" min="1" required class="mono"></div>
+      <div class="field"><label>Target amount (KES)</label><input type="number" step="0.01" inputmode="decimal" name="amount" min="1" required class="mono"></div>
       <button type="submit" class="btn btn-primary btn-block">Save target</button>
     </form>`;
   showSheet();
@@ -1271,7 +1477,7 @@ function renderAutomation(){
               <button class="tiny-btn" onclick="deleteRule('${r.id}')">${icon('trash',15)}</button>
             </div>
           </div>
-          <div class="row-sub">${r.percent}% → ${cat?.icon} ${cat?.name} · Applies to: ${scope}</div>
+          <div class="row-sub">${r.percent}% → ${catIconInline(cat)}${cat?.name} · Applies to: ${scope}</div>
         </div>`;
       }).join('') : `<div class="empty">${icon('zap',30)}<div class="empty-title">No automation rules yet</div></div>`}
       <button class="btn btn-secondary btn-block" style="margin-top:12px;" onclick="openRuleModal()">${icon('plus',16)} Add rule</button>
@@ -1291,9 +1497,9 @@ function openRuleModal(){
     <div class="sheet-head"><div class="sheet-title">New automation rule</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
     <form onsubmit="return submitRule(event)">
       <div class="field"><label>Rule name</label><input type="text" name="name" required placeholder="e.g. Save 10% of every income"></div>
-      <div class="field"><label>Percentage of income</label><input type="number" name="percent" min="1" max="100" required placeholder="10"></div>
+      <div class="field"><label>Percentage of income</label><input type="number" step="0.01" inputmode="decimal" name="percent" min="1" max="100" required placeholder="10"></div>
       <div class="field"><label>Move it to category</label>
-        <select name="categoryId" required>${expCats.map(c=>`<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</select>
+        <select name="categoryId" required>${expCats.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       </div>
       <div class="field"><label>Applies to</label>
         <select name="appliesTo">${scopeOptions.map(o=>`<option value="${o.value}">${o.label}</option>`).join('')}</select>
@@ -1429,6 +1635,10 @@ function openSettings(){
 }
 function renderSettingsBody(){
   const isDark = currentTheme === 'dark';
+  const supported = notificationsSupported();
+  const perm = notifPermission();
+  const on = notifEnabled();
+  const notifStatus = !supported ? 'Not supported in this browser' : perm==='denied' ? 'Blocked in browser settings' : on ? 'On for this device' : 'Off';
   document.getElementById('sheet').innerHTML = `
     <div class="sheet-head"><div class="sheet-title">Settings</div><button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button></div>
     <div class="section-title first">Appearance</div>
@@ -1443,6 +1653,20 @@ function renderSettingsBody(){
         </div>
         <button class="btn btn-secondary btn-sm" onclick="toggleTheme()">${isDark?'Light':'Dark'}</button>
       </div>
+    </div>
+    <div class="section-title first">Notifications</div>
+    <div class="card" style="box-shadow:none;margin-bottom:14px;">
+      <div class="row-flex">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="row-icon" style="background:var(--surface-alt);color:var(--ink-soft);">${icon('bell',18)}</div>
+          <div>
+            <div class="row-title">Reminders &amp; budget alerts</div>
+            <div class="row-sub">${notifStatus}</div>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" ${!supported||perm==='denied'?'disabled':''} onclick="toggleNotifications()">${on?'Disable':'Enable'}</button>
+      </div>
+      <div class="row-sub" style="margin-top:10px;">Notifies this device when you're nearing or over a budget, and reminds you in the evening if you haven't logged anything today. On iPhone, add Ledger to your Home Screen first (Share → Add to Home Screen) for notifications to work.</div>
     </div>
     <div class="section-title first">Export</div>
     <div class="card" style="box-shadow:none;margin-bottom:14px;">
@@ -1464,7 +1688,7 @@ function renderSettingsBody(){
     <div style="max-height:340px;overflow-y:auto;">
       ${state.categories.map(c=>`
         <div class="list-row">
-          <div class="row-icon" style="background:${c.color}22">${c.icon}</div>
+          <div class="row-icon" style="background:${c.color}22;color:${c.color};">${icon(c.icon,18)}</div>
           <div class="row-main">
             <div class="row-title">${c.name}</div>
             <div class="row-sub">${c.type==='income'?'Income':'Expense'}</div>
@@ -1480,7 +1704,7 @@ function deleteCategory(id){
   renderSettingsBody();
 }
 function openNewCategoryForm(){
-  let selColor = CAT_COLORS[0], selIcon = CAT_ICONS[0], selType='expense';
+  const autoColor = guessCategoryColor();
   document.getElementById('sheet').innerHTML = `
     <div class="sheet-head"><div class="sheet-title">New category</div><button class="icon-btn" onclick="openSettings()">${icon('chevron',17)}</button></div>
     <form onsubmit="return submitCategory(event)">
@@ -1488,38 +1712,41 @@ function openNewCategoryForm(){
         <button type="button" class="active expense" data-type="expense" onclick="pickCatType(this,'expense')">Expense</button>
         <button type="button" data-type="income" onclick="pickCatType(this,'income')">Income</button>
       </div>
-      <div class="field"><label>Name</label><input type="text" name="name" required placeholder="e.g. Subscriptions"></div>
-      <div class="field"><label>Icon</label>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;">
-          ${CAT_ICONS.map((ic,i)=>`<button type="button" class="chip ${i===0?'selected':''}" data-icon="${ic}" onclick="pickCatIcon(this)" style="font-size:16px;padding:8px 11px;">${ic}</button>`).join('')}
+      <div class="field">
+        <label>Name</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div id="catPreview" style="width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:${autoColor}22;color:${autoColor};">${icon('receipt',18)}</div>
+          <input type="text" name="name" required placeholder="e.g. Subscriptions" style="flex:1;" oninput="updateCatPreview(this)" autocomplete="off">
         </div>
-      </div>
-      <div class="field"><label>Color</label>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;">
-          ${CAT_COLORS.map((c,i)=>`<div class="swatch ${i===0?'selected':''}" data-color="${c}" style="background:${c}" onclick="pickCatColor(this)"></div>`).join('')}
-        </div>
+        <div class="row-sub" style="margin-top:6px;">We'll pick a fitting icon and color automatically — just name it.</div>
       </div>
       <input type="hidden" name="type" value="expense">
-      <input type="hidden" name="icon" value="${CAT_ICONS[0]}">
-      <input type="hidden" name="color" value="${CAT_COLORS[0]}">
+      <input type="hidden" name="icon" value="receipt">
+      <input type="hidden" name="color" value="${autoColor}">
       <button type="submit" class="btn btn-primary btn-block" style="margin-top:6px;">Add category</button>
     </form>
   `;
 }
+function updateCatPreview(input){
+  const form = input.closest('form');
+  const type = form.type.value;
+  const name = input.value.trim();
+  const guessedIcon = guessCategoryIcon(name, type);
+  form.icon.value = guessedIcon;
+  const preview = document.getElementById('catPreview');
+  if(preview){
+    preview.innerHTML = icon(guessedIcon,18);
+    const color = form.color.value;
+    preview.style.color = color;
+    preview.style.background = color+'22';
+  }
+}
 function pickCatType(btn,type){
   btn.parentElement.querySelectorAll('button').forEach(b=>{b.classList.remove('active','income','expense');});
   btn.classList.add('active',type);
-  btn.closest('form').type.value=type;
-}
-function pickCatIcon(btn){
-  btn.parentElement.querySelectorAll('.chip').forEach(b=>b.classList.remove('selected'));
-  btn.classList.add('selected');
-  btn.closest('form').icon.value=btn.dataset.icon;
-}
-function pickCatColor(el){
-  el.parentElement.querySelectorAll('.swatch').forEach(s=>s.classList.remove('selected'));
-  el.classList.add('selected');
-  el.closest('form').color.value=el.dataset.color;
+  const form = btn.closest('form');
+  form.type.value = type;
+  updateCatPreview(form.name);
 }
 function submitCategory(e){
   e.preventDefault();
@@ -1546,6 +1773,18 @@ function loadAIChat(){
 }
 function persistAIChat(){
   try{ localStorage.setItem(AI_CHAT_STORAGE, JSON.stringify(aiChat.slice(-40))); }catch(e){}
+}
+function confirmClearAdvisorChat(){
+  if(!aiChat.length) return;
+  if(confirm('Delete this conversation with the AI Advisor? This can\'t be undone.')){
+    clearAdvisorChat();
+  }
+}
+function clearAdvisorChat(){
+  aiChat = [];
+  persistAIChat();
+  if(ttsSupported()) window.speechSynthesis.cancel();
+  render();
 }
 function hasAIKey(){ return !!localStorage.getItem(AI_KEY_STORAGE); }
 
@@ -1595,7 +1834,7 @@ async function callGeminiAdvisor(userMessage){
     headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({
       systemInstruction: {
-        parts: [{text: `You are the financial advisor built into the user's personal "Ledger" app. All amounts are in Kenyan Shillings (KES). Base every answer strictly on the financial snapshot below — never invent numbers that aren't in it. Be direct and specific (cite real figures and category names), flag overspending against stated budgets/targets when it applies, and keep answers concise (roughly under 150 words) unless the user asks for more detail.\n\nFINANCIAL SNAPSHOT:\n${snapshot}`}]
+        parts: [{text: `You are the financial advisor built into the user's personal "Ledger" app. All amounts are in Kenyan Shillings (KES). Base every answer strictly on the financial snapshot below — never invent numbers that aren't in it. Be direct and specific (cite real figures and category names), flag overspending against stated budgets/targets when it applies, and keep answers concise (roughly under 150 words) unless the user asks for more detail. Write in plain conversational text only — no markdown, no asterisks, no bullet symbols, no bold/italic formatting; use plain sentences or a simple numbered list with "1." "2." etc. if you need a list.\n\nFINANCIAL SNAPSHOT:\n${snapshot}`}]
       },
       contents: [...history, {role:'user', parts:[{text:userMessage}]}],
       generationConfig: { maxOutputTokens: 700 }
@@ -1611,11 +1850,75 @@ async function callGeminiAdvisor(userMessage){
   const data = await res.json();
   const parts = data.candidates?.[0]?.content?.parts || [];
   const text = parts.map(p=>p.text||'').join('\n').trim();
-  return text || "I didn't get a usable response — try again.";
+  return sanitizeAdvisorText(text) || "I didn't get a usable response — try again.";
+}
+function sanitizeAdvisorText(text){
+  return (text||'')
+    .replace(/\*\*(.*?)\*\*/g, '$1')  // bold
+    .replace(/\*(.*?)\*/g, '$1')      // italic
+    .replace(/^[ \t]*\*[ \t]+/gm, '') // leftover bullet asterisks
+    .replace(/\*/g, '')               // any remaining stray asterisks
+    .trim();
 }
 
-function chatBubbleHTML(m){
-  return `<div class="chat-bubble ${m.role==='user'?'user':'ai'}">${escapeHTML(m.content).replace(/\n/g,'<br>')}</div>`;
+/* ============ VOICE (speak & listen) ============ */
+const VOICE_ENABLED_KEY = 'ledger-ai-voice-v1';
+let voiceEnabled = localStorage.getItem(VOICE_ENABLED_KEY) !== '0';
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizer = null;
+let isListening = false;
+
+function ttsSupported(){ return 'speechSynthesis' in window; }
+function micSupported(){ return !!SpeechRecognitionAPI; }
+
+function setVoiceEnabled(v){
+  voiceEnabled = v;
+  localStorage.setItem(VOICE_ENABLED_KEY, v?'1':'0');
+  if(!v && ttsSupported()) window.speechSynthesis.cancel();
+  render();
+}
+function toggleVoice(){ setVoiceEnabled(!voiceEnabled); }
+
+function speakText(text){
+  if(!ttsSupported() || !text) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1;
+  u.pitch = 1;
+  window.speechSynthesis.speak(u);
+}
+
+function toggleMic(){
+  if(!micSupported()){
+    alert('Voice input isn\'t supported in this browser. It works best in Chrome on Android.');
+    return;
+  }
+  if(isListening){ recognizer && recognizer.stop(); return; }
+  recognizer = new SpeechRecognitionAPI();
+  recognizer.lang = 'en-US';
+  recognizer.interimResults = true;
+  recognizer.continuous = false;
+  recognizer.onstart = ()=>{ isListening = true; render(); };
+  recognizer.onerror = ()=>{ isListening = false; render(); };
+  recognizer.onend = ()=>{ isListening = false; };
+  recognizer.onresult = (e)=>{
+    let transcript = '';
+    for(let i=0;i<e.results.length;i++) transcript += e.results[i][0].transcript;
+    const input = document.getElementById('aiInput');
+    if(input) input.value = transcript;
+    if(e.results[e.results.length-1].isFinal){
+      sendAdvisorMessage({preventDefault(){}});
+    }
+  };
+  try{ recognizer.start(); }catch(e){ isListening=false; }
+}
+
+function chatBubbleHTML(m, i){
+  const isUser = m.role==='user';
+  const speaker = (!isUser && ttsSupported()) ? `<button class="icon-btn" style="width:22px;height:22px;flex-shrink:0;" onclick="speakText(aiChat[${i}].content)" title="Play">${icon('volume',13)}</button>` : '';
+  return `<div class="chat-bubble ${isUser?'user':'ai'}" style="display:flex;align-items:flex-start;gap:6px;">
+    <span style="flex:1;">${escapeHTML(m.content).replace(/\n/g,'<br>')}</span>${speaker}
+  </div>`;
 }
 
 function renderAdvisor(){
@@ -1630,7 +1933,11 @@ function renderAdvisor(){
             <div class="row-sub">${ok?'Connected — answers use your real transactions':'Add your Gemini API key to start'}</div>
           </div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="openAIKeySetup()">${ok?'Change key':'Add key'}</button>
+        <div style="display:flex;gap:6px;">
+          ${ttsSupported()?`<button class="icon-btn" title="${voiceEnabled?'Voice replies on':'Voice replies off'}" onclick="toggleVoice()">${icon(voiceEnabled?'volume':'x',16)}</button>`:''}
+          ${aiChat.length?`<button class="icon-btn" title="Delete conversation" onclick="confirmClearAdvisorChat()">${icon('trash',16)}</button>`:''}
+          <button class="btn btn-secondary btn-sm" onclick="openAIKeySetup()">${ok?'Change key':'Add key'}</button>
+        </div>
       </div>
     </div>
     <div class="tabbar-scroll">
@@ -1640,11 +1947,12 @@ function renderAdvisor(){
       <button class="chip" onclick="quickAskAI('Am I on track to hit my savings targets this month?')">Am I on track?</button>
     </div>
     <div class="card" id="aiChatLog" style="margin-top:10px;min-height:220px;max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;">
-      ${aiChat.length? aiChat.map(chatBubbleHTML).join('') : `<div class="empty">${icon('sparkle',30)}<div class="empty-title">Ask about your spending, budgets, or businesses</div></div>`}
+      ${aiChat.length? aiChat.map((m,i)=>chatBubbleHTML(m,i)).join('') : `<div class="empty">${icon('sparkle',30)}<div class="empty-title">Ask about your spending, budgets, or businesses — or tap the mic to speak</div></div>`}
       ${aiThinking? `<div class="chat-bubble ai"><span class="ai-typing">Thinking…</span></div>` : ''}
     </div>
-    <form onsubmit="return sendAdvisorMessage(event)" class="form-actions" style="margin-top:10px;">
-      <input type="text" id="aiInput" placeholder="${ok?'Ask about your finances…':'Add your API key first'}" style="flex:1;border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface);color:var(--ink);" ${ok?'':'disabled'} autocomplete="off">
+    <form onsubmit="return sendAdvisorMessage(event)" class="form-actions" style="margin-top:10px;gap:6px;">
+      <input type="text" id="aiInput" placeholder="${isListening?'Listening…':(ok?'Ask about your finances…':'Add your API key first')}" style="flex:1;border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface);color:var(--ink);" ${ok?'':'disabled'} autocomplete="off">
+      ${micSupported()?`<button type="button" class="icon-btn" style="${isListening?'background:var(--danger,#C0362C);color:#fff;':''}" title="${isListening?'Stop listening':'Speak your question'}" onclick="toggleMic()" ${ok?'':'disabled'}>${icon('mic',16)}</button>`:''}
       <button type="submit" class="btn btn-primary" ${ok?'':'disabled'}>${icon('chevron',16)}</button>
     </form>
     <div class="row-sub" style="margin-top:8px;">Your API key is stored only in this browser and is sent straight to Google's Gemini API — it never passes through Client Nest or anywhere else.</div>
@@ -1703,6 +2011,8 @@ function sendAdvisorMessage(e){
     aiThinking = false;
     persistAIChat();
     render();
+    if(voiceEnabled) speakText(reply);
+    if(document.hidden) showLedgerNotification('Your AI Advisor', reply.slice(0,140), 'ledger-ai-advice');
   }).catch(err=>{
     aiChat.push({role:'assistant', content:`⚠️ ${err.message||'Could not reach the AI advisor.'}`});
     aiThinking = false;
@@ -1733,7 +2043,7 @@ function openExportModal(){
       <button class="btn btn-secondary btn-block" onclick="runExport('csv')">${icon('download',16)} CSV file</button>
       <button class="btn btn-primary btn-block" onclick="runExport('pdf')">${icon('download',16)} PDF statement</button>
     </div>
-    <div class="row-sub" style="margin-top:10px;">CSV opens in Excel/Sheets. PDF statement opens your browser's print dialog — choose "Save as PDF".</div>
+    <div class="row-sub" style="margin-top:10px;">Both download straight to your device — CSV opens in Excel/Sheets, PDF opens in any PDF viewer.</div>
   `;
   showSheet();
 }
@@ -1769,7 +2079,6 @@ function csvEscape(v){
 function runExport(kind){
   const txs = getExportTx();
   if(!txs.length){
-    showMpesaShareStatus && null;
     alert('No transactions match that range/business.');
     return;
   }
@@ -1794,44 +2103,84 @@ function exportLedgerCSV(txs){
   closeSheet();
 }
 function exportLedgerPDF(txs){
+  if(!window.jspdf || !window.jspdf.jsPDF){
+    alert('PDF engine is still loading — please wait a moment and try again.');
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'a4' });
   const totalIncome = txs.filter(t=>t.type==='income').reduce((a,t)=>a+t.amount,0);
   const totalExpense = txs.filter(t=>t.type==='expense').reduce((a,t)=>a+t.amount,0);
   const net = totalIncome - totalExpense;
+
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(16);
+  doc.text('Client Nest — Ledger Statement', 40, 46);
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(9);
+  doc.setTextColor(90,100,110);
+  doc.text(`${txs.length} transactions · ${txs[0].date} to ${txs[txs.length-1].date}`, 40, 62);
+  doc.text(`Generated ${todayISO()}  ·  All amounts in KES`, 40, 74);
+
+  doc.setDrawColor(220,224,222);
+  doc.line(40, 84, 555, 84);
+
+  doc.setFontSize(9);
+  doc.setTextColor(90,100,110);
+  doc.text('TOTAL INCOME', 40, 100);
+  doc.text('TOTAL EXPENSE', 220, 100);
+  doc.text('NET', 400, 100);
+  doc.setFont('helvetica','bold');
+  doc.setFontSize(12);
+  doc.setTextColor(10,122,112);
+  doc.text(fmt(totalIncome), 40, 116);
+  doc.setTextColor(192,54,44);
+  doc.text(fmt(totalExpense), 220, 116);
+  doc.setTextColor(15,23,42);
+  doc.text(fmt(net), 400, 116);
+
   let balance = 0;
-  const rowsHTML = txs.map(t=>{
+  const body = txs.map(t=>{
     balance += t.type==='income' ? t.amount : -t.amount;
     const cat = catById(t.categoryId);
     const src = sourceLabel(t.source);
-    return `<tr>
-      <td>${escapeHTML(t.date)}</td>
-      <td>${escapeHTML(cat?cat.name:'')}</td>
-      <td>${escapeHTML(t.note||'')}</td>
-      <td>${escapeHTML(src||'')}</td>
-      <td class="amt ${t.type}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</td>
-      <td class="amt">${fmt(balance)}</td>
-    </tr>`;
-  }).join('');
-  document.getElementById('print-area').innerHTML = `
-    <div class="p-head">
-      <div>
-        <p class="p-title">Client Nest — Ledger Statement</p>
-        <div class="p-sub">${txs.length} transactions · ${escapeHTML(txs[0].date)} to ${escapeHTML(txs[txs.length-1].date)}</div>
-      </div>
-      <div class="p-meta">Generated ${escapeHTML(todayISO())}<br>All amounts in KES</div>
-    </div>
-    <div class="p-summary">
-      <div><div class="p-label">Total income</div><div class="p-value">${fmt(totalIncome)}</div></div>
-      <div><div class="p-label">Total expense</div><div class="p-value">${fmt(totalExpense)}</div></div>
-      <div><div class="p-label">Net</div><div class="p-value">${fmt(net)}</div></div>
-    </div>
-    <table class="p-table">
-      <thead><tr><th>Date</th><th>Category</th><th>Note</th><th>Business/Source</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Balance</th></tr></thead>
-      <tbody>${rowsHTML}</tbody>
-    </table>
-    <div class="p-footer">Generated by Ledger</div>
-  `;
+    return [
+      t.date,
+      cat?cat.name:'',
+      t.note||'',
+      src||'',
+      (t.type==='income'?'+':'-')+fmt(t.amount),
+      fmt(balance)
+    ];
+  });
+
+  doc.autoTable({
+    startY: 134,
+    head: [['Date','Category','Note','Business/Source','Amount','Balance']],
+    body,
+    styles:{ fontSize:8.5, cellPadding:5, textColor:[15,23,42] },
+    headStyles:{ fillColor:[15,23,42], textColor:255, fontStyle:'bold' },
+    columnStyles:{ 4:{halign:'right'}, 5:{halign:'right'} },
+    didParseCell: (d)=>{
+      if(d.section==='body' && d.column.index===4){
+        d.cell.styles.textColor = body[d.row.index][4].startsWith('+') ? [10,122,112] : [192,54,44];
+      }
+    },
+    margin:{ left:40, right:40 },
+    theme:'striped'
+  });
+
+  const pageCount = doc.internal.getNumberOfPages();
+  for(let i=1;i<=pageCount;i++){
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(150,160,172);
+    doc.text('Generated by Ledger', 40, 820);
+    doc.text(`Page ${i} of ${pageCount}`, 515, 820);
+  }
+
+  doc.save(`ledger-${todayISO()}.pdf`);
   closeSheet();
-  setTimeout(()=>window.print(), 150);
 }
 
 /* ============ SHEET / MODAL CONTROLS ============ */
@@ -1843,6 +2192,11 @@ document.getElementById('overlay').addEventListener('click', e=>{ if(e.target.id
 loadTheme();
 loadAIChat();
 loadState();
+if(localStorage.getItem(NOTIF_ENABLED_KEY)==='true' && notifPermission()==='granted' && 'serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+setInterval(checkFinanceReminders, 60*60*1000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkFinanceReminders(); });
 </script>
 </body>
 </html>
