@@ -415,6 +415,8 @@ const ICONS = {
   receipt:'<path d="M4 2h16v20l-2-1.5L16 22l-2-1.5L12 22l-2-1.5L8 22l-2-1.5L4 22V2Z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="12" y2="15"/>',
   tag:'<path d="M12.59 2.59a2 2 0 0 0-1.42-.59H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.99 9a2 2 0 0 0 2.83 0l7.17-7.17a2 2 0 0 0 0-2.83l-9-8.99Z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>',
   laptop:'<rect x="4" y="4" width="16" height="10" rx="1"/><path d="M2 18h20l-1.5-3h-17Z"/>',
+  repeat:'<path d="M17 2 21 6 17 10"/><path d="M3 12v-2a4 4 0 0 1 4-4h14"/><path d="M7 22 3 18 7 14"/><path d="M21 12v2a4 4 0 0 1-4 4H3"/>',
+  creditCard:'<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>',
 };
 function icon(name,size=18,stroke=2){
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
@@ -444,6 +446,7 @@ const CAT_ICON_RULES = [
   {keys:['salary','wage','payroll','income'], icon:'wallet'},
   {keys:['business','client','freelance','project','contract','consult'], icon:'briefcase'},
   {keys:['church','tithe','offering'], icon:'landmark'},
+  {keys:['fuliza','okoa jahazi','loan','borrow','overdraft'], icon:'creditCard'},
 ];
 function hashStr(s){ let h=0; for(let i=0;i<s.length;i++){ h=(h*31 + s.charCodeAt(i))|0; } return Math.abs(h); }
 function guessCategoryIcon(name, type){
@@ -952,11 +955,16 @@ function donutChart(breakdown,total){
 function txRowHTML(t){
   const cat = catById(t.categoryId);
   const src = sourceLabel(t.source);
+  const badges = [
+    t.mpesa?.isLoan?`<span class="pill amber">${icon('creditCard',11)} ${escapeHTML(t.mpesa.loanProvider||'Loan')}</span>`:'',
+    t.mpesa?.isSavings?`<span class="pill teal">${icon('up',11)} Savings</span>`:'',
+    t.mpesa?.isSelfTransfer?`<span class="pill gray">${icon('repeat',11)} Self</span>`:'',
+  ].filter(Boolean).join(' ');
   return `<div class="list-row">
     <div class="row-icon" style="background:${cat?cat.color+'22':'#eee'};color:${cat?cat.color:'#94A0AC'};">${cat?icon(cat.icon,18):icon('tag',18)}</div>
     <div class="row-main">
       <div class="row-title">${t.note||cat?.name||'Transaction'}</div>
-      <div class="row-sub">${cat?cat.name:''}${src?' · '+src:''} · ${t.date}</div>
+      <div class="row-sub">${cat?cat.name:''}${src?' · '+src:''} · ${t.date}${badges?' '+badges:''}</div>
     </div>
     <div class="row-amt ${t.type}">${t.type==='income'?'+':'-'}${fmt(t.amount)}</div>
   </div>`;
@@ -1112,7 +1120,7 @@ function openMpesaImportModal(){
     <form onsubmit="return parseMpesaImport(event)">
       <div class="banner info" style="margin-bottom:14px;">
         ${icon('info',17)}
-        <div class="banner-text">Paste an M-Pesa SMS or upload a text file. Ledger will detect income or expense, amount, date, and recipient, then ask you to choose a category.</div>
+        <div class="banner-text">Paste an M-Pesa SMS or upload a text file. Ledger detects income or expense, amount, date, fees, and balance — and flags Fuliza, Okoa Jahazi, and M-Shwari (including Lock Savings) automatically.</div>
       </div>
       <div class="field">
         <label>M-Pesa message</label>
@@ -1167,20 +1175,111 @@ function parseMpesaMessage(message){
   const dateMatch = clean.match(/\bon\s+(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})(?:\s+at\s+([0-9:.]+\s*(?:am|pm)?))?/i);
   const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g,'')) : 0;
   const date = dateMatch ? mpesaDateToISO(dateMatch) : '';
-  const type = detectMpesaType(lower);
-  const party = detectMpesaParty(clean, type);
+  const time = dateMatch && dateMatch[4] ? mpesaTimeTo24h(dateMatch[4]) : '';
+  const ref = detectMpesaRef(clean);
+  const balance = detectMpesaBalance(clean);
+  const fee = detectMpesaFee(clean);
+  const mshwari = detectMshwari(clean);
+  const loan = detectMpesaLoan(clean, mshwari);
+  let type = detectMpesaType(lower);
+  if(!type && loan.isLoan) type = mshwari.isMshwari && mshwari.direction ? (mshwari.direction==='in'?'income':'expense') : 'expense'; // Fuliza/Okoa Jahazi/M-Shwari loan notices without "paid to/sent to" still need a direction
+  if(!type && mshwari.isMshwari && mshwari.direction) type = mshwari.direction==='in' ? 'income' : 'expense';
+  const party = detectMpesaParty(clean, type, mshwari);
+  const isSelfTransfer = detectSelfTransfer(party, type);
   if(!amount) return {valid:false,error:'No M-Pesa amount was found in that message.'};
   if(!date) return {valid:false,error:'No transaction date was found. Please paste the full M-Pesa message with the "on day/month/year" date.'};
   if(!type) return {valid:false,error:'I found the amount, but could not tell if it is income or expense.'};
+  if(ref){
+    const dup = state.transactions.find(t=>t.mpesa?.ref && t.mpesa.ref===ref);
+    if(dup) return {valid:false, error:`This M-Pesa message was already imported (ref ${ref}) on ${dup.date}. Skipping to avoid a duplicate entry.`, duplicate:true};
+  }
   return {
     valid:true,
-    type,
-    amount,
-    date,
-    party,
+    type, amount, date, time, party, ref, balance, fee,
+    isLoan: loan.isLoan, loanProvider: loan.provider,
+    isSelfTransfer,
+    isSavings: mshwari.isMshwari && !loan.isLoan,
+    isLocked: mshwari.isLocked, matured: mshwari.matured, mshwariBalance: mshwari.balance,
     raw:clean,
-    note: mpesaNote(type, party, clean)
+    note: mpesaNote(type, party, loan, isSelfTransfer, mshwari)
   };
+}
+
+function detectMpesaRef(message){
+  const m = message.match(/\b([A-Z0-9]{6,12})\s+Confirmed\.?/i);
+  return m ? m[1].toUpperCase() : null;
+}
+function detectMpesaBalance(message){
+  const m = message.match(/(?:new\s+)?m-pesa\s+balance\s+is\s+ksh\.?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+  return m ? parseFloat(m[1].replace(/,/g,'')) : null;
+}
+function detectMpesaFee(message){
+  const m = message.match(/transaction\s+cost,?\s*ksh\.?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+  return m ? parseFloat(m[1].replace(/,/g,'')) : 0;
+}
+// M-Shwari messages don't follow the usual "paid to X"/"received from X" shape — they describe
+// money moving between the M-PESA and M-Shwari accounts, a loan, or a Lock Savings Account.
+// Real wording can vary a little by message type, so this matches on the phrases that stay
+// fairly constant (M-Shwari, Lock Savings, matured, loan) rather than one exact template.
+function detectMshwari(message){
+  const isMshwari = /m-?shwari/i.test(message);
+  if(!isMshwari) return {isMshwari:false, isLoan:false, isLocked:false, matured:false, direction:null};
+  const isLoan = /\bloan\b/i.test(message);
+  const matured = /\bmatured\b/i.test(message);
+  const isLocked = !matured && /\block(?:ed)?\s+savings?\b/i.test(message);
+  const toMshwari = /\bto\s+(?:your\s+)?m-?shwari\b/i.test(message);
+  const fromMshwari = /\bfrom\s+(?:your\s+)?m-?shwari\b/i.test(message);
+  let direction = null;
+  if(toMshwari && !fromMshwari) direction = 'out';       // money leaving M-PESA into M-Shwari
+  else if(fromMshwari && !toMshwari) direction = 'in';   // money leaving M-Shwari into M-PESA
+  else if(matured) direction = 'in';
+  else if(isLocked) direction = 'out';
+  else if(isLoan && /\brepaid\b/i.test(message)) direction = 'out';
+  else if(isLoan && /\breceived\b|\bdisbursed\b|to your m-pesa/i.test(message)) direction = 'in';
+  return {isMshwari, isLoan, isLocked, matured, direction, balance: detectMshwariBalance(message)};
+}
+function detectMshwariBalance(message){
+  const m = message.match(/m-?shwari\s+balance\s+is\s+ksh\.?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+  return m ? parseFloat(m[1].replace(/,/g,'')) : null;
+}
+function detectMpesaLoan(message, mshwari){
+  if(/okoa\s*jahazi/i.test(message)) return {isLoan:true, provider:'Okoa Jahazi'};
+  if(/\bfuliza\b/i.test(message)) return {isLoan:true, provider:'Fuliza'};
+  if(mshwari?.isMshwari && mshwari.isLoan) return {isLoan:true, provider:'M-Shwari Loan'};
+  return {isLoan:false, provider:null};
+}
+function detectSelfTransfer(party, type){
+  const uname = getUserName();
+  if(!uname || !party || (type!=='income' && type!=='expense')) return false;
+  const norm = s => (s||'').toUpperCase().replace(/[^A-Z ]/g,'').replace(/\s+/g,' ').trim();
+  const a = norm(uname), b = norm(party);
+  if(!a || !b) return false;
+  return b.includes(a) || a.includes(b);
+}
+function mpesaTimeTo24h(str){
+  const m = (str||'').trim().toUpperCase().match(/(\d{1,2})[:.](\d{2})\s*(AM|PM)?/);
+  if(!m) return '';
+  let h = parseInt(m[1],10);
+  const min = m[2];
+  const ampm = m[3];
+  if(ampm==='PM' && h<12) h += 12;
+  if(ampm==='AM' && h===12) h = 0;
+  if(h>23) return '';
+  return `${String(h).padStart(2,'0')}:${min}`;
+}
+function computeBalanceDiscrepancy(parsed){
+  if(parsed.balance==null) return null;
+  const withBalance = state.transactions.filter(t=>t.mpesa && typeof t.mpesa.balance==='number');
+  if(!withBalance.length) return null;
+  withBalance.sort((a,b)=>(a.date+(a.mpesa.time||'')).localeCompare(b.date+(b.mpesa.time||'')));
+  const prev = withBalance[withBalance.length-1];
+  if(prev.date > parsed.date) return null;
+  const expected = parsed.type==='income'
+    ? prev.mpesa.balance + parsed.amount
+    : prev.mpesa.balance - parsed.amount - (parsed.fee||0);
+  const diff = Math.round((parsed.balance-expected)*100)/100;
+  if(Math.abs(diff) < 1) return null;
+  return {expected, actual:parsed.balance, diff, prevDate:prev.date, prevBalance:prev.mpesa.balance};
 }
 
 function detectMpesaType(lower){
@@ -1189,7 +1288,13 @@ function detectMpesaType(lower){
   return null;
 }
 
-function detectMpesaParty(message, type){
+function detectMpesaParty(message, type, mshwari){
+  if(mshwari?.isMshwari){
+    if(mshwari.isLoan) return 'M-Shwari Loan';
+    if(mshwari.isLocked) return 'M-Shwari Lock Savings';
+    if(mshwari.matured) return 'M-Shwari Lock Savings (matured)';
+    return 'M-Shwari';
+  }
   if(type==='expense' && /\bairtime\b/i.test(message)) return 'Safaricom Airtime';
   const patterns = type==='income'
     ? [/\bfrom\s+(.+?)(?:\s+\d{7,}|\s+on\s+|\.\s*New|\.\s*Your|\.\s*M-PESA|$)/i]
@@ -1225,32 +1330,55 @@ function mpesaDateToISO(match){
   return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
 }
 
-function mpesaNote(type, party, raw){
+function mpesaNote(type, party, loan, isSelfTransfer, mshwari){
+  if(loan?.isLoan) return `${loan.provider} ${type==='income'?'received':'repaid'}`.slice(0,80);
+  if(mshwari?.isMshwari){
+    if(mshwari.matured) return 'M-Shwari Lock Savings matured'.slice(0,80);
+    if(mshwari.isLocked) return 'M-Shwari Lock Savings deposit'.slice(0,80);
+    return `M-Shwari ${type==='income'?'withdrawal':'deposit'}`.slice(0,80);
+  }
+  if(isSelfTransfer) return `Self-transfer (${party||'own line'})`.slice(0,80);
   const prefix = type==='income' ? 'M-Pesa from' : 'M-Pesa to';
   return `${prefix} ${party || 'unknown'}`.slice(0,80);
 }
 
 function renderMpesaCategoryStep(parsed){
   const cats = state.categories.filter(c=>c.type===parsed.type);
+  const loanCat = parsed.isLoan ? cats.find(c=>/fuliza|okoa|loan|borrow/i.test(c.name)) : null;
+  const savingsCat = parsed.isSavings ? cats.find(c=>/saving|mshwari|m-shwari/i.test(c.name)) : null;
+  const preselectCat = loanCat || savingsCat;
+  const discrepancy = computeBalanceDiscrepancy(parsed);
+  const savingsLabel = parsed.matured ? 'Lock Savings matured' : parsed.isLocked ? 'Lock Savings' : 'M-Shwari Savings';
+  const badges = [
+    parsed.isLoan?`<span class="pill amber">${icon('creditCard',12)} ${escapeHTML(parsed.loanProvider)}</span>`:'',
+    parsed.isSavings?`<span class="pill teal">${icon('up',12)} ${escapeHTML(savingsLabel)}</span>`:'',
+    parsed.isSelfTransfer?`<span class="pill gray">${icon('repeat',12)} Self-transfer</span>`:'',
+  ].filter(Boolean).join(' ');
   document.getElementById('sheet').innerHTML = `
     <div class="sheet-head">
       <div class="sheet-title">Choose category</div>
       <button class="icon-btn" onclick="openMpesaImportModal()">${icon('chevron',17)}</button>
     </div>
     <div class="parse-preview">
+      ${badges?`<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">${badges}</div>`:''}
       <div class="parse-grid">
         <div class="parse-item"><div class="parse-label">Type</div><div class="parse-value">${parsed.type==='income'?'Income':'Expense'}</div></div>
         <div class="parse-item"><div class="parse-label">Amount</div><div class="parse-value mono">${fmt(parsed.amount)}</div></div>
-        <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${parsed.date}</div></div>
+        <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${parsed.date}${parsed.time?' '+parsed.time:''}</div></div>
         <div class="parse-item"><div class="parse-label">${parsed.type==='income'?'From':'Recipient'}</div><div class="parse-value">${escapeHTML(parsed.party)}</div></div>
+        ${parsed.ref?`<div class="parse-item"><div class="parse-label">Reference</div><div class="parse-value mono">${escapeHTML(parsed.ref)}</div></div>`:''}
+        ${parsed.fee?`<div class="parse-item"><div class="parse-label">Fee</div><div class="parse-value mono">${fmt(parsed.fee)}</div></div>`:''}
+        ${parsed.balance!=null?`<div class="parse-item"><div class="parse-label">New balance</div><div class="parse-value mono">${fmt(parsed.balance)}</div></div>`:''}
+        ${parsed.mshwariBalance!=null?`<div class="parse-item"><div class="parse-label">M-Shwari balance</div><div class="parse-value mono">${fmt(parsed.mshwariBalance)}</div></div>`:''}
       </div>
+      ${discrepancy?`<div class="banner danger" style="margin-top:10px;">${icon('alert',17)}<div class="banner-text">Balance doesn't quite add up: your last recorded balance was ${fmt(discrepancy.prevBalance)} on ${discrepancy.prevDate}, so this message's balance was expected to be about ${fmt(discrepancy.expected)}, but it shows ${fmt(discrepancy.actual)} (${discrepancy.diff>0?'+':''}${fmt(discrepancy.diff)} off). This can happen if another M-Pesa transaction wasn't imported in between — worth double-checking.</div></div>`:''}
       <div class="parse-message">${escapeHTML(parsed.raw)}</div>
     </div>
     <form onsubmit="return submitMpesaImport(event)">
       <div class="field">
         <label>Category for this ${parsed.type}</label>
         <select name="categoryId" required>
-          ${cats.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('')}
+          ${cats.map(c=>`<option value="${c.id}" ${preselectCat && preselectCat.id===c.id?'selected':''}>${escapeHTML(c.name)}</option>`).join('')}
         </select>
       </div>
       <div class="field">
@@ -1280,9 +1408,27 @@ function submitMpesaImport(e){
       date:f.date.value,
       note:f.note.value.trim() || parsed.note,
       source:null,
-      mpesa:{party:parsed.party, message:parsed.raw}
+      mpesa:{
+        party:parsed.party,
+        message:parsed.raw,
+        ref:parsed.ref,
+        balance:parsed.balance,
+        fee:parsed.fee,
+        time:parsed.time,
+        isLoan:parsed.isLoan,
+        loanProvider:parsed.loanProvider,
+        isSelfTransfer:parsed.isSelfTransfer,
+        isSavings:parsed.isSavings,
+        isLocked:parsed.isLocked,
+        matured:parsed.matured,
+        mshwariBalance:parsed.mshwariBalance
+      }
     });
-    if(parsed.type==='income') applyAutomation(s, parsed.amount, null, f.date.value);
+    // Skip automation for money that isn't genuinely new: transfers to yourself, savings
+    // moving back into M-Pesa, or a loan landing in your account are all still your own
+    // money (or a debt) — not fresh income to slice up with percentage-based rules.
+    const isFreshIncome = parsed.type==='income' && !parsed.isSelfTransfer && !parsed.isSavings && !parsed.isLoan;
+    if(isFreshIncome) applyAutomation(s, parsed.amount, null, f.date.value);
   });
   pendingMpesaImport=null;
   closeSheet();
@@ -1293,17 +1439,27 @@ function openMpesaMessageModal(txId){
   const tx = state.transactions.find(t=>t.id===txId);
   if(!tx?.mpesa?.message) return;
   const cat = catById(tx.categoryId);
+  const badges = [
+    tx.mpesa.isLoan?`<span class="pill amber">${icon('creditCard',12)} ${escapeHTML(tx.mpesa.loanProvider||'Loan')}</span>`:'',
+    tx.mpesa.isSavings?`<span class="pill teal">${icon('up',12)} ${tx.mpesa.matured?'Lock Savings matured':tx.mpesa.isLocked?'Lock Savings':'M-Shwari Savings'}</span>`:'',
+    tx.mpesa.isSelfTransfer?`<span class="pill gray">${icon('repeat',12)} Self-transfer</span>`:'',
+  ].filter(Boolean).join(' ');
   document.getElementById('sheet').innerHTML = `
     <div class="sheet-head">
       <div class="sheet-title">M-Pesa message</div>
       <button class="icon-btn" onclick="closeSheet()">${icon('x',17)}</button>
     </div>
     <div class="parse-preview">
+      ${badges?`<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">${badges}</div>`:''}
       <div class="parse-grid">
         <div class="parse-item"><div class="parse-label">Type</div><div class="parse-value">${tx.type==='income'?'Income':'Expense'}</div></div>
         <div class="parse-item"><div class="parse-label">Amount</div><div class="parse-value mono">${fmt(tx.amount)}</div></div>
-        <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${tx.date}</div></div>
+        <div class="parse-item"><div class="parse-label">Date</div><div class="parse-value mono">${tx.date}${tx.mpesa.time?' '+tx.mpesa.time:''}</div></div>
         <div class="parse-item"><div class="parse-label">${tx.type==='income'?'From':'Recipient'}</div><div class="parse-value">${escapeHTML(tx.mpesa.party || 'M-Pesa')}</div></div>
+        ${tx.mpesa.ref?`<div class="parse-item"><div class="parse-label">Reference</div><div class="parse-value mono">${escapeHTML(tx.mpesa.ref)}</div></div>`:''}
+        ${tx.mpesa.fee?`<div class="parse-item"><div class="parse-label">Fee</div><div class="parse-value mono">${fmt(tx.mpesa.fee)}</div></div>`:''}
+        ${tx.mpesa.balance!=null?`<div class="parse-item"><div class="parse-label">Balance after</div><div class="parse-value mono">${fmt(tx.mpesa.balance)}</div></div>`:''}
+        ${tx.mpesa.mshwariBalance!=null?`<div class="parse-item"><div class="parse-label">M-Shwari balance</div><div class="parse-value mono">${fmt(tx.mpesa.mshwariBalance)}</div></div>`:''}
       </div>
       <div class="parse-message">${cat?`${catIconInline(cat)}${escapeHTML(cat.name)}`:'Uncategorized'}</div>
     </div>
@@ -1748,6 +1904,20 @@ function renderSettingsBody(){
       </div>
       <div class="row-sub" style="margin-top:10px;">Shows a banner in the app when you're nearing or over a budget, and reminds you in the evening if you haven't logged anything today.${supported?' On this device you\'ll also get a system notification when the app is in the background.':''}</div>
     </div>
+    <div class="section-title first">M-Pesa</div>
+    <div class="card" style="box-shadow:none;margin-bottom:14px;">
+      <div class="row-flex">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="row-icon" style="background:var(--surface-alt);color:var(--ink-soft);">${icon('wallet',18)}</div>
+          <div>
+            <div class="row-title">Your name</div>
+            <div class="row-sub">${getUserName() ? escapeHTML(getUserName()) : 'Not set — used to detect self-transfers'}</div>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="openUserNameSetup()">${getUserName()?'Change':'Add'}</button>
+      </div>
+      <div class="row-sub" style="margin-top:10px;">Used so Ledger can recognize when an M-Pesa message is you moving money between your own lines, instead of counting it as real income or spending.</div>
+    </div>
     <div class="section-title first">Export</div>
     <div class="card" style="box-shadow:none;margin-bottom:14px;">
       <div class="row-flex">
@@ -2114,6 +2284,35 @@ function renderAdvisor(){
     </form>
     <div class="row-sub" style="margin-top:8px;">Your API key is stored only in this browser and is sent straight to Google's Gemini API — it never passes through Client Nest or anywhere else.</div>
   `;
+}
+
+const USER_NAME_KEY = 'ledger-user-name-v1';
+function getUserName(){ return (localStorage.getItem(USER_NAME_KEY) || '').trim(); }
+function openUserNameSetup(){
+  const existing = getUserName();
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head"><div class="sheet-title">Your name</div><button class="icon-btn" onclick="renderSettingsBody()">${icon('x',17)}</button></div>
+    <form onsubmit="return saveUserNameFromForm(event)">
+      <div class="field"><label>Name as it appears in M-Pesa messages</label><input type="text" name="uname" value="${escapeHTML(existing)}" placeholder="e.g. JOHN KAMAU" autocomplete="off"></div>
+      <div class="row-sub" style="margin-bottom:14px;">M-Pesa messages show names in capitals, e.g. "sent to JOHN KAMAU". Enter it the same way so transfers between your own lines can be recognized.</div>
+      <div class="form-actions">
+        ${existing?`<button type="button" class="btn btn-secondary" onclick="clearUserName()">Remove</button>`:''}
+        <button type="submit" class="btn btn-primary btn-block">Save</button>
+      </div>
+    </form>
+  `;
+  showSheet();
+}
+function saveUserNameFromForm(e){
+  e.preventDefault();
+  const name = e.target.uname.value.trim();
+  if(name) localStorage.setItem(USER_NAME_KEY, name); else localStorage.removeItem(USER_NAME_KEY);
+  renderSettingsBody();
+  return false;
+}
+function clearUserName(){
+  localStorage.removeItem(USER_NAME_KEY);
+  renderSettingsBody();
 }
 
 function openAIKeySetup(){
